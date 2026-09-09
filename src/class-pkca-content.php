@@ -244,6 +244,21 @@ final class PKCA_Content {
 		foreach ( self::get_changes( $post_id ) as $change ) {
 			$layout_marker = '_flex_content_' . (int) $change['layout_index'] . '_';
 			$field_instance = (string) ( $acf_field['name'] ?? '' );
+			$field_path = array_map( 'strval', (array) ( $change['field_path'] ?? array() ) );
+			$link_property = $field_path ? end( $field_path ) : '';
+			$link_parent_path = array_slice( $field_path, 0, -1 );
+			$link_instance_suffix = '_' . implode( '_', $link_parent_path );
+			$section_marker = 'content_repeater_' . (int) $change['row_index'] . '_flex_content_' . (int) $change['layout_index'] . '_';
+			if (
+				'link' === ( $acf_field['type'] ?? '' )
+				&& is_array( $value )
+				&& in_array( $link_property, array( 'title', 'url', 'target' ), true )
+				&& str_contains( $field_instance, $section_marker )
+				&& str_ends_with( $field_instance, $link_instance_suffix )
+			) {
+				$value[ $link_property ] = $change['new_value'];
+				return $value;
+			}
 			$instance_suffix = '_' . implode( '_', array_map( 'strval', (array) ( $change['field_path'] ?? array() ) ) );
 			if ( ! empty( $change['field_key'] ) && $change['field_key'] === $acf_field['key'] && ( ! str_contains( $field_instance, '_flex_content_' ) || str_contains( $field_instance, $layout_marker ) ) && str_ends_with( $field_instance, $instance_suffix ) ) {
 				return 'repeater' === ( $acf_field['type'] ?? '' )

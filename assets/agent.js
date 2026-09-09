@@ -716,6 +716,20 @@
           changedElement = updateSelectedElement(textNode, oldText, newText) ? textNode : null;
           textNode = null;
         }
+		// After a server-rendered preview reload the intended element can already
+		// contain the new value. In that case do not replace another occurrence of
+		// the old value (for example the page title inside a breadcrumb).
+		if (!changedElement && !textNode) {
+		  const newValueWalker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
+		  let newValueNode;
+		  while ((newValueNode = newValueWalker.nextNode())) {
+			if (normalizeText(newValueNode.nodeValue) === normalizeText(newText)) break;
+		  }
+		  if (newValueNode) {
+			changedElement = newValueNode.parentElement;
+			state.previewTargets.set(targetKey, { type: 'text', node: newValueNode });
+		  }
+		}
         if (!changedElement && !textNode) {
           const walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
           while ((textNode = walker.nextNode())) {
