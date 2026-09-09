@@ -146,6 +146,8 @@
 
       state.selection = {
         section: sectionIndex + 1,
+		layout: sectionContext?.layout || '',
+		scope: matchedField ? 'field' : 'layout',
         type: isImage ? 'image' : 'text',
         value: selectedValue,
         alt: isImage ? (target.alt || '') : '',

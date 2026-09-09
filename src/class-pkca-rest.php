@@ -78,6 +78,25 @@ final class PKCA_REST {
 		$selection = $this->sanitize_selection( $request->get_param( 'selection' ) );
 		if ( $selection ) {
 			$selection = $this->resolve_selection( $selection, $context );
+			$section_context = $context['sections'][ $selection['section'] - 1 ] ?? array();
+			$selection['collection_candidates'] = array_values(
+				array_map(
+					static fn( array $field ): array => array(
+						'label'        => $field['label'] ?? $field['name'] ?? '',
+						'name'         => $field['name'] ?? '',
+						'path'         => $field['path'] ?? array(),
+						'type'         => $field['type'] ?? '',
+						'row_template' => $field['row_template'] ?? null,
+						'row_fields'   => $field['row_fields'] ?? null,
+						'min'          => $field['min'] ?? 0,
+						'max'          => $field['max'] ?? 0,
+					),
+					array_filter(
+						(array) ( $section_context['fields'] ?? array() ),
+						static fn( array $field ): bool => in_array( $field['type'] ?? '', array( 'repeater', 'gallery' ), true ) && false !== ( $field['editable'] ?? true )
+					)
+				)
+			);
 			$context['selection'] = $selection;
 		}
 		$history = array();
@@ -95,7 +114,8 @@ final class PKCA_REST {
 			return $action;
 		}
 		if ( ! empty( $selection ) && 'change' === ( $action['action'] ?? '' ) ) {
-			if ( empty( $selection['field_path'] ) ) {
+			$is_structural = in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true );
+			if ( empty( $selection['field_path'] ) && ! $is_structural ) {
 				return rest_ensure_response(
 					array(
 						'action'  => 'clarify',
@@ -104,7 +124,9 @@ final class PKCA_REST {
 				);
 			}
 			$action['section'] = $selection['section'];
-			if ( preg_match( '/\b(link|linken|url|verwijs|doorstuur)/iu', $original_message ) && 'title' === end( $selection['field_path'] ) ) {
+			if ( $is_structural ) {
+				// The click identifies the layout; the model identifies its collection field.
+			} elseif ( preg_match( '/\b(link|linken|url|verwijs|doorstuur)/iu', $original_message ) && 'title' === end( $selection['field_path'] ) ) {
 				$link_path = $selection['field_path'];
 				$link_path[ count( $link_path ) - 1 ] = 'url';
 				$action['field_path'] = $link_path;
@@ -118,6 +140,13 @@ final class PKCA_REST {
 		}
 		$action = $this->enforce_selected_partial_replacement( $action, $original_message, $selection );
 		if ( 'change' === ( $action['action'] ?? '' ) ) {
+			if ( in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true ) ) {
+				$decoded_value = json_decode( (string) ( $action['value_json'] ?? '' ), true );
+				if ( ! is_array( $decoded_value ) ) {
+					return new WP_Error( 'pkca_structured_value', 'De voorgestelde rijen konden niet veilig worden verwerkt.', array( 'status' => 422 ) );
+				}
+				$action['value'] = $decoded_value;
+			}
 			$change = PKCA_Content::add_change(
 				$post_id,
 				array(
@@ -153,6 +182,8 @@ final class PKCA_REST {
 			'occurrence' => absint( $selection['occurrence'] ?? 0 ),
 			'field_path' => is_array( $selection['fieldPath'] ?? null ) ? array_map( 'sanitize_key', $selection['fieldPath'] ) : null,
 			'field_name' => sanitize_key( (string) ( $selection['fieldName'] ?? '' ) ),
+			'layout'     => sanitize_key( (string) ( $selection['layout'] ?? '' ) ),
+			'scope'      => 'field' === ( $selection['scope'] ?? '' ) ? 'field' : 'layout',
 		);
 	}
 
