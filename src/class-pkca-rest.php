@@ -429,8 +429,17 @@ final class PKCA_REST {
 		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 
-	public function discard( WP_REST_Request $request ): WP_REST_Response {
-		PKCA_Content::discard( absint( $request['post_id'] ) );
-		return rest_ensure_response( array( 'discarded' => true ) );
+	public function discard( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$post_id = absint( $request['post_id'] );
+		$change_id = sanitize_text_field( (string) $request->get_param( 'change_id' ) );
+		if ( '' !== $change_id ) {
+			if ( ! PKCA_Content::discard_change( $post_id, $change_id ) ) {
+				return new WP_Error( 'pkca_change_not_found', 'Deze wijziging staat niet meer klaar.', array( 'status' => 404 ) );
+			}
+			$context = PKCA_Content::inspect( $post_id );
+			return is_wp_error( $context ) ? $context : rest_ensure_response( array( 'discarded' => true, 'changes' => $context['changes'] ) );
+		}
+		PKCA_Content::discard( $post_id );
+		return rest_ensure_response( array( 'discarded' => true, 'changes' => array() ) );
 	}
 }

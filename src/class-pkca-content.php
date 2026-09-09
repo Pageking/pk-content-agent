@@ -936,6 +936,25 @@ final class PKCA_Content {
 		delete_transient( self::transient_key( $post_id ) );
 	}
 
+	public static function discard_change( int $post_id, string $change_id ): bool {
+		$changes = self::get_changes( $post_id );
+		$remaining = array_values(
+			array_filter(
+				$changes,
+				static fn( array $change ): bool => (string) ( $change['id'] ?? '' ) !== $change_id
+			)
+		);
+		if ( count( $remaining ) === count( $changes ) ) {
+			return false;
+		}
+		if ( $remaining ) {
+			self::save_changes( $post_id, $remaining );
+		} else {
+			self::discard( $post_id );
+		}
+		return true;
+	}
+
 	public static function get_changes( int $post_id ): array {
 		$value = get_transient( self::transient_key( $post_id ) );
 		return is_array( $value ) ? $value : array();

@@ -990,10 +990,11 @@
     }
     changes.hidden = false;
     changes.innerHTML = `<details class="pkca__change-details"><summary><strong><i aria-hidden="true"></i>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} klaar</strong><span>Bekijken</span></summary><div class="pkca__change-list">${items.map(item => `
-      <div class="pkca__change"><span>Sectie ${item.section} · ${escapeHtml(item.field_name)}</span><del>${escapeHtml(changeValueSummary(item.old_value, item.type))}</del><ins>${escapeHtml(changeValueSummary(item.new_value, item.type))}</ins></div>`).join('')}</div></details>
-      <div class="pkca__actions"><button type="button" data-action="discard">Ongedaan</button><button type="button" data-action="publish">Alles opslaan</button></div>`;
+      <div class="pkca__change"><span>Sectie ${item.section} · ${escapeHtml(item.field_name)}</span><del>${escapeHtml(changeValueSummary(item.old_value, item.type))}</del><ins>${escapeHtml(changeValueSummary(item.new_value, item.type))}</ins><button type="button" class="pkca__change-discard" data-change-id="${escapeHtml(item.id || '')}">Deze wijziging ongedaan maken</button></div>`).join('')}</div></details>
+      <div class="pkca__actions"><button type="button" data-action="discard">Alles ongedaan</button><button type="button" data-action="publish">Alles opslaan</button></div>`;
     changes.querySelector('[data-action=publish]').addEventListener('click', () => finish('publish'));
     changes.querySelector('[data-action=discard]').addEventListener('click', () => finish('discard'));
+	changes.querySelectorAll('[data-change-id]').forEach(button => button.addEventListener('click', () => discardChange(button.dataset.changeId)));
   }
 
   function changeValueSummary(value, type) {
@@ -1019,6 +1020,23 @@
       setBusy(false);
     }
   }
+
+	async function discardChange(changeId) {
+	  if (!changeId) return;
+	  setBusy(true);
+	  try {
+		await request('discard', {
+		  method: 'POST',
+		  headers: { 'Content-Type': 'application/json' },
+		  body: JSON.stringify({ post_id: config.postId, change_id: changeId })
+		});
+		sessionStorage.setItem('pkca-status', 'Wijziging ongedaan gemaakt.');
+		window.location.reload();
+	  } catch (error) {
+		addMessage(error.message, 'error');
+		setBusy(false);
+	  }
+	}
 
   function addMessage(text, kind, persist = true) {
     const el = document.createElement('div');
