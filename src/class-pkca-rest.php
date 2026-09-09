@@ -122,7 +122,9 @@ final class PKCA_REST {
 			);
 		}
 		$message = $this->normalize_editor_language( $message, $selection, $context );
-		$action = PKCA_OpenAI::interpret( $message, $context, array_slice( $history, -20 ) );
+		$action = $page_wide
+			? $this->interpret_page_wide( $original_message, $context, array_slice( $history, -20 ) )
+			: PKCA_OpenAI::interpret( $message, $context, array_slice( $history, -20 ) );
 		if ( is_wp_error( $action ) ) {
 			return $action;
 		}
@@ -271,6 +273,97 @@ final class PKCA_REST {
 			$action['changes'] = is_wp_error( $updated_context ) ? array() : $updated_context['changes'];
 		}
 		return rest_ensure_response( $action );
+	}
+
+	private function interpret_page_wide( string $message, array $context, array $history ): array|WP_Error {
+		$all_changes = array();
+		$errors = array();
+		$sections = (array) ( $context['sections'] ?? array() );
+		foreach ( array_chunk( $sections, 5 ) as $chunk_index => $section_chunk ) {
+			$chunk_context = $context;
+			$chunk_context['sections'] = $section_chunk;
+			$chunk_context['request_scope'] = 'page_chunk';
+			$chunk_context['chunk'] = array(
+				'number' => $chunk_index + 1,
+				'total'  => (int) ceil( count( $sections ) / 5 ),
+				'instruction' => 'Controleer ieder editable veld in deze secties. Geef alle concrete wijzigingen terug en sla niets over dat onder de gebruikersopdracht valt.',
+			);
+			unset( $chunk_context['selection'], $chunk_context['visual_selection'] );
+			$result = PKCA_OpenAI::interpret( $message, $chunk_context, $history );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $result;
+				continue;
+			}
+			$chunk_changes = json_decode( (string) ( $result['changes_json'] ?? '' ), true );
+			if ( ! is_array( $chunk_changes ) ) {
+				$chunk_changes = array();
+			}
+			if ( 'change' === ( $result['action'] ?? '' ) && isset( $result['section'], $result['field_path'] ) ) {
+				$single = array_intersect_key(
+					$result,
+					array_flip( array( 'section', 'field_path', 'field_name', 'field_type', 'value', 'value_json', 'operation', 'search', 'replacement' ) )
+				);
+				$single_key = (int) ( $single['section'] ?? 0 ) . ':' . implode( '.', (array) ( $single['field_path'] ?? array() ) );
+				$already_present = false;
+				foreach ( $chunk_changes as $candidate ) {
+					$candidate_key = (int) ( $candidate['section'] ?? 0 ) . ':' . implode( '.', (array) ( $candidate['field_path'] ?? array() ) );
+					if ( $candidate_key === $single_key ) {
+						$already_present = true;
+						break;
+					}
+				}
+				if ( ! $already_present ) {
+					$chunk_changes[] = $single;
+				}
+			}
+			foreach ( $chunk_changes as $candidate ) {
+				if ( ! is_array( $candidate ) || empty( $candidate['section'] ) || empty( $candidate['field_path'] ) ) {
+					continue;
+				}
+				$key = (int) $candidate['section'] . ':' . implode( '.', (array) $candidate['field_path'] );
+				$all_changes[ $key ] = $candidate;
+				if ( count( $all_changes ) >= 50 ) {
+					break 2;
+				}
+			}
+		}
+
+		if ( array() === $all_changes ) {
+			if ( $errors ) {
+				return $errors[0];
+			}
+			return array(
+				'action'       => 'answer',
+				'message'      => 'De volledige pagina is gecontroleerd, maar er zijn geen concrete nieuwe wijzigingen gevonden.',
+				'section'      => null,
+				'field_path'   => null,
+				'field_name'   => null,
+				'field_type'   => null,
+				'value'        => null,
+				'value_json'   => null,
+				'changes_json' => null,
+				'operation'    => null,
+				'search'       => null,
+				'replacement'  => null,
+			);
+		}
+
+		$changes = array_values( $all_changes );
+		return array(
+			'action'       => 'change',
+			'message'      => count( $changes ) . ' voorstellen gevonden in de volledige pagina.',
+			'section'      => $changes[0]['section'] ?? null,
+			'field_path'   => $changes[0]['field_path'] ?? null,
+			'field_name'   => $changes[0]['field_name'] ?? null,
+			'field_type'   => $changes[0]['field_type'] ?? null,
+			'value'        => $changes[0]['value'] ?? null,
+			'value_json'   => $changes[0]['value_json'] ?? null,
+			'changes_json' => wp_json_encode( $changes, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ),
+			'operation'    => $changes[0]['operation'] ?? null,
+			'search'       => $changes[0]['search'] ?? null,
+			'replacement'  => $changes[0]['replacement'] ?? null,
+			'chunk_errors' => count( $errors ),
+		);
 	}
 
 	private function is_page_wide_request( string $message ): bool {
