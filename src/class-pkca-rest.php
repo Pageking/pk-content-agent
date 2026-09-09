@@ -116,12 +116,18 @@ final class PKCA_REST {
 		if ( ! empty( $selection ) && 'change' === ( $action['action'] ?? '' ) ) {
 			$is_structural = in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true );
 			if ( empty( $selection['field_path'] ) && ! $is_structural ) {
-				return rest_ensure_response(
-					array(
-						'action'  => 'clarify',
-						'message' => 'Dit onderdeel komt meerdere keren voor en kon niet veilig aan één veld worden gekoppeld. Wijs de tekst zelf nogmaals aan.',
-					)
-				);
+				$intent_field = $this->resolve_field_from_layout_intent( $action, $original_message, $selection, $context );
+				if ( ! $intent_field ) {
+					return rest_ensure_response(
+						array(
+							'action'  => 'clarify',
+							'message' => 'In deze sectie zijn meerdere passende velden. Klik de bedoelde tekst of knop zelf aan.',
+						)
+					);
+				}
+				$selection['field_path'] = $intent_field['path'];
+				$selection['field_name'] = $intent_field['name'];
+				$selection['type'] = $intent_field['type'];
 			}
 			$action['section'] = $selection['section'];
 			if ( $is_structural ) {
@@ -168,6 +174,56 @@ final class PKCA_REST {
 			$action['changes'] = is_wp_error( $updated_context ) ? array() : $updated_context['changes'];
 		}
 		return rest_ensure_response( $action );
+	}
+
+	private function resolve_field_from_layout_intent( array $action, string $message, array $selection, array $context ): ?array {
+		$section = $context['sections'][ (int) ( $selection['section'] ?? 0 ) - 1 ] ?? null;
+		if ( ! is_array( $section ) ) {
+			return null;
+		}
+		$fields = array_values(
+			array_filter(
+				(array) ( $section['fields'] ?? array() ),
+				static fn( array $field ): bool => false !== ( $field['editable'] ?? true )
+			)
+		);
+
+		if ( preg_match( '/\b(knoptekst|buttontekst|(?:knop|button|cta)[ -]?(?:tekst|titel))\b/iu', $message ) ) {
+			$button_fields = array_values(
+				array_filter(
+					$fields,
+					static function ( array $field ): bool {
+						$path = array_map( 'strtolower', (array) ( $field['path'] ?? array() ) );
+						return 'text' === ( $field['type'] ?? '' )
+							&& 'title' === (string) end( $path )
+							&& ( in_array( 'button', $path, true ) || in_array( 'buttons', $path, true ) );
+					}
+				)
+			);
+			if ( count( $button_fields ) > 1 && ! empty( $selection['value'] ) ) {
+				$visible_matches = array_values(
+					array_filter(
+						$button_fields,
+						static fn( array $field ): bool => '' !== (string) ( $field['value'] ?? '' ) && str_contains( (string) $selection['value'], (string) $field['value'] )
+					)
+				);
+				if ( 1 === count( $visible_matches ) ) {
+					return $visible_matches[0];
+				}
+			}
+			if ( 1 === count( $button_fields ) ) {
+				return $button_fields[0];
+			}
+		}
+
+		$action_path = is_array( $action['field_path'] ?? null ) ? array_map( 'strval', $action['field_path'] ) : array();
+		$matches = array_values(
+			array_filter(
+				$fields,
+				static fn( array $field ): bool => $action_path && ( $field['path'] ?? array() ) === $action_path && ( empty( $action['field_type'] ) || ( $field['type'] ?? '' ) === $action['field_type'] )
+			)
+		);
+		return 1 === count( $matches ) ? $matches[0] : null;
 	}
 
 	private function sanitize_selection( mixed $selection ): array {
