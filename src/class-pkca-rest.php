@@ -157,6 +157,7 @@ final class PKCA_REST {
 				return rest_ensure_response( array( 'action' => 'clarify', 'message' => 'Ik kon niet alle deelopdrachten veilig vertalen naar afzonderlijke velden.' ) );
 			}
 			$queued = array();
+			$skipped = array();
 			foreach ( $prepared as $prepared_change ) {
 				$field = $prepared_change['field'];
 				$item = $prepared_change['item'];
@@ -174,15 +175,39 @@ final class PKCA_REST {
 					)
 				);
 				if ( is_wp_error( $change ) ) {
-					return $change;
+					$skipped[] = array(
+						'field'   => (string) ( $field['label'] ?? $field['name'] ?? 'veld' ),
+						'code'    => $change->get_error_code(),
+						'message' => $change->get_error_message(),
+					);
+					continue;
 				}
 				$queued[] = $change;
+			}
+			if ( array() === $queued ) {
+				$only_unchanged = array() !== $skipped && count(
+					array_filter( $skipped, static fn( array $item ): bool => 'pkca_no_change' === $item['code'] )
+				) === count( $skipped );
+				if ( $only_unchanged ) {
+					return rest_ensure_response(
+						array(
+							'action'  => 'answer',
+							'message' => 'De controle is uitgevoerd, maar deze voorstellen waren al gelijk aan de actuele preview. Er zijn geen dubbele wijzigingen toegevoegd.',
+							'changes' => $context['changes'] ?? array(),
+						)
+					);
+				}
+				return new WP_Error( 'pkca_batch_failed', (string) ( $skipped[0]['message'] ?? 'De voorgestelde wijzigingen konden niet worden verwerkt.' ), array( 'status' => 422, 'skipped' => $skipped ) );
 			}
 			$updated_context = PKCA_Content::inspect( $post_id );
 			$action['change'] = $queued[0] ?? null;
 			$action['queued'] = $queued;
 			$action['changes'] = is_wp_error( $updated_context ) ? array() : $updated_context['changes'];
+			$action['skipped'] = $skipped;
 			$action['message'] = count( $queued ) . ' wijzigingen zijn klaargezet.';
+			if ( $skipped ) {
+				$action['message'] .= ' ' . count( $skipped ) . ' ongewijzigde of ongeldige voorstel(len) zijn overgeslagen; de overige velden zijn wel verwerkt.';
+			}
 			return rest_ensure_response( $action );
 		}
 		if ( ! empty( $selection ) && 'change' === ( $action['action'] ?? '' ) ) {
