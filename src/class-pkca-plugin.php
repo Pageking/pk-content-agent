@@ -141,12 +141,12 @@ final class PKCA_Plugin {
 			array_fill_keys( array( 'profile', 'audiences', 'services', 'positioning', 'tone', 'terminology', 'facts' ), '' )
 		);
 		$context_fields = array(
-			'profile'     => array( 'Bedrijfsprofiel', 'Wie is het bedrijf, wat doet het en wat is de missie? Beschrijf ook regio, omvang en markt als dat relevant is.', 'Bijvoorbeeld: NOVA is een landelijk advies- en accountancykantoor dat ondernemers helpt met...' ),
+			'profile'     => array( 'Bedrijfsprofiel', 'Wie is het bedrijf, wat doet het en wat is de missie? Beschrijf ook regio, omvang en markt als dat relevant is.', 'Bijvoorbeeld: wij zijn een adviesbureau dat organisaties helpt met...' ),
 			'audiences'   => array( 'Doelgroepen', 'Voor wie schrijven we? Benoem per doelgroep de belangrijkste behoeften, vragen en bezwaren.', 'Bijvoorbeeld: mkb-ondernemers die behoefte hebben aan grip op cijfers; starters die...' ),
 			'services'    => array( 'Diensten en expertise', 'Welke diensten, specialismen en oplossingen biedt het bedrijf? Gebruik bij voorkeur de officiële benamingen.', 'Bijvoorbeeld: accountancy, belastingadvies, corporate finance, IT-advies...' ),
 			'positioning' => array( 'Positionering en kernboodschappen', 'Wat maakt het bedrijf onderscheidend en welke boodschappen moeten in teksten herkenbaar terugkomen?', 'Bijvoorbeeld: persoonlijke aandacht gecombineerd met specialistische kennis...' ),
 			'tone'        => array( 'Tone of voice', 'Beschrijf schrijfstijl, aanspreekvorm en gewenste uitstraling. Voeg eventueel korte goede voorbeelden toe.', 'Bijvoorbeeld: deskundig maar toegankelijk; actief Nederlands; spreek de lezer aan met je...' ),
-			'terminology' => array( 'Terminologie en schrijfregels', 'Welke woorden, schrijfwijzen en CTA-stijlen gebruiken of vermijden we?', 'Bijvoorbeeld: schrijf NOVA altijd in hoofdletters; gebruik adviseur in plaats van consultant; vermijd...' ),
+			'terminology' => array( 'Terminologie en schrijfregels', 'Welke woorden, schrijfwijzen en CTA-stijlen gebruiken of vermijden we?', 'Bijvoorbeeld: schrijf de bedrijfsnaam altijd op dezelfde manier; gebruik adviseur in plaats van consultant; vermijd...' ),
 			'facts'       => array( 'Feiten, bewijs en beperkingen', 'Noteer controleerbare feiten en claims die gebruikt mogen worden. Zet hier ook wat de agent nooit mag aannemen of verzinnen.', 'Bijvoorbeeld: actief vanuit 8 vestigingen; geen aantallen of garanties noemen zonder bron...' ),
 		);
 		?>
