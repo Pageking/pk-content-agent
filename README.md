@@ -9,7 +9,7 @@ De plugin controleert publieke GitHub-releases van `Pageking/pk-content-agent` v
 ## Installatie
 
 1. Activeer **PK Content Agent** in WordPress.
-2. Stel onder **Instellingen → PK Content Agent** een OpenAI API-key en model in.
+2. Stel onder **Instellingen → PK Content Agent** een OpenAI API-key, model en bedrijfscontext in.
 3. Open als bevoegde editor een singular frontendpagina.
 4. Gebruik de knop **Pagina aanpassen** rechtsonder.
 
@@ -22,6 +22,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 ## Functionaliteit
 
 - Inventariseert `content_repeater → flex_content` zonder layouts hard te coderen.
+- Gebruikt een vaste bedrijfsbriefing voor doelgroep, diensten, positionering, tone of voice, terminologie en controleerbare claims.
 - Ondersteunt bestaande tekst-, WYSIWYG- en afbeeldingsvelden.
 - Afbeeldingen kunnen in het chatvenster worden geüpload.
 - De chat blijft tijdens de bewerksessie open en bewaart de laatste 100 berichten per pagina in de browsertab.
