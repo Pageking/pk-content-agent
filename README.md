@@ -1,0 +1,40 @@
+# PK Content Agent
+
+WordPress-plugin voor veilige ACF Flexible Content-wijzigingen vanuit een visuele frontend-editor en chat-assistent.
+
+## Updates
+
+De plugin controleert publieke GitHub-releases van `Pageking/pk-content-agent` via Plugin Update Checker. Publiceer voor iedere nieuwe versie een GitHub-release met een semantische tag, bijvoorbeeld `v0.20.0`. De versie in `pk-content-agent.php` moet overeenkomen met de tag.
+
+## Installatie
+
+1. Activeer **PK Content Agent** in WordPress.
+2. Stel onder **Instellingen → PK Content Agent** een OpenAI API-key en model in.
+3. Open als bevoegde editor een singular frontendpagina.
+4. Gebruik de knop **Pagina aanpassen** rechtsonder.
+
+Voor productie kan de key buiten de database worden gezet:
+
+```php
+define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
+```
+
+## Functionaliteit
+
+- Inventariseert `content_repeater → flex_content` zonder layouts hard te coderen.
+- Ondersteunt bestaande tekst-, WYSIWYG- en afbeeldingsvelden.
+- Afbeeldingen kunnen in het chatvenster worden geüpload.
+- De chat blijft tijdens de bewerksessie open en bewaart de laatste 100 berichten per pagina in de browsertab.
+- Meerdere opdrachten worden zonder paginaherlading direct als visuele preview gestapeld.
+- Met **Aanwijzen** kan een zichtbare tekst, knop of afbeelding aan het exacte ACF-veld worden gekoppeld.
+- Het venster kan via de titelbalk worden versleept en met de minknop worden ingeklapt.
+- Wijzigingen zijn eerst een gebruikersgebonden preview van twee uur.
+- **Wijzigingen opslaan** en **Alles ongedaan maken** zijn expliciete handelingen.
+- Alleen gebruikers met `edit_post` voor de huidige pagina krijgen toegang.
+
+## Bewuste beperkingen
+
+- De chat wijzigt één concreet veld per opdracht.
+- Layouts toevoegen, verwijderen of verplaatsen wordt niet ondersteund.
+- Dynamische relaties worden in de pagina-inventaris zichtbaar, maar vrije querylogica in templates wordt nog niet volledig geanalyseerd.
+- Een lokale WordPress-database en API-key zijn nodig voor een end-to-end test.
