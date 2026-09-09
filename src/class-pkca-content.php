@@ -49,7 +49,7 @@ final class PKCA_Content {
 				);
 			}
 		}
-		$pending_changes = self::get_changes( $post_id );
+		$pending_changes = self::with_required_condition_changes( self::get_changes( $post_id ), $sections );
 		foreach ( $pending_changes as $pending ) {
 			$section_index = (int) ( $pending['section'] ?? 0 ) - 1;
 			if ( ! isset( $sections[ $section_index ] ) ) {
@@ -216,6 +216,7 @@ final class PKCA_Content {
 		if ( is_wp_error( $inspection ) ) {
 			return $value;
 		}
+		$changes = $inspection['changes'];
 		foreach ( $changes as $change ) {
 			$section = $inspection['sections'][ (int) $change['section'] - 1 ] ?? null;
 			$field = null;
@@ -225,7 +226,12 @@ final class PKCA_Content {
 			$row = (int) $change['row_index'];
 			$layout = (int) $change['layout_index'];
 			if ( $field && isset( $value[ $row ][ $flex_key ][ $layout ] ) ) {
-				self::set_nested_value( $value[ $row ][ $flex_key ][ $layout ], $field['raw_path'], $change['new_value'] );
+				$replacement = $change['new_value'];
+				if ( 'repeater' === ( $change['type'] ?? '' ) && ! empty( $field['key'] ) ) {
+					$definition = acf_get_field( $field['key'] );
+					$replacement = self::repeater_rows_for_acf_load( (array) $replacement, (array) ( $definition['sub_fields'] ?? array() ) );
+				}
+				self::set_nested_value( $value[ $row ][ $flex_key ][ $layout ], $field['raw_path'], $replacement );
 			}
 		}
 		return $value;
@@ -646,7 +652,11 @@ final class PKCA_Content {
 	}
 
 	public static function publish( int $post_id ): array|WP_Error {
-		$changes = self::get_changes( $post_id );
+		$inspection = self::inspect( $post_id );
+		if ( is_wp_error( $inspection ) ) {
+			return $inspection;
+		}
+		$changes = $inspection['changes'];
 		if ( array() === $changes ) {
 			return new WP_Error( 'pkca_no_changes', 'Er zijn geen wijzigingen om te publiceren.', array( 'status' => 400 ) );
 		}
@@ -691,6 +701,66 @@ final class PKCA_Content {
 		wp_update_post( array( 'ID' => $post_id ) );
 		delete_transient( self::transient_key( $post_id ) );
 		return array( 'published' => count( $changes ), 'url' => get_permalink( $post_id ) );
+	}
+
+	/**
+	 * Add the simple equality conditions required to make a changed field active.
+	 * ACF uses these controller fields while rendering, so a pending child value
+	 * without its matching mode (for example FAQ = manual) would stay invisible.
+	 */
+	private static function with_required_condition_changes( array $changes, array $sections ): array {
+		foreach ( $changes as $change ) {
+			$section_index = (int) ( $change['section'] ?? 0 ) - 1;
+			$section = $sections[ $section_index ] ?? null;
+			if ( ! is_array( $section ) ) {
+				continue;
+			}
+			$target = null;
+			foreach ( $section['fields'] as $field ) {
+				if ( ( $field['path'] ?? array() ) === ( $change['field_path'] ?? array() ) ) {
+					$target = $field;
+					break;
+				}
+			}
+			$condition_group = $target['conditional_logic'][0] ?? array();
+			foreach ( $condition_group as $condition ) {
+				if ( '==' !== ( $condition['operator'] ?? '' ) || ! isset( $condition['field'], $condition['value'] ) ) {
+					continue;
+				}
+				foreach ( $section['fields'] as $controller ) {
+					if ( ( $controller['key'] ?? '' ) !== $condition['field'] || false === ( $controller['editable'] ?? true ) ) {
+						continue;
+					}
+					$required_value = $condition['value'];
+					$already_queued = false;
+					foreach ( $changes as $queued ) {
+						if ( ( $queued['section'] ?? 0 ) === ( $change['section'] ?? 0 ) && ( $queued['field_path'] ?? array() ) === ( $controller['path'] ?? array() ) ) {
+							$already_queued = true;
+							break;
+						}
+					}
+					if ( $already_queued || (string) ( $controller['value'] ?? '' ) === (string) $required_value ) {
+						continue;
+					}
+					$changes[] = array(
+						'id'           => 'condition-' . md5( wp_json_encode( array( $change['section'], $controller['path'], $required_value ) ) ),
+						'row_index'    => $section['row_index'],
+						'layout_index' => $section['layout_index'],
+						'section'      => $section['number'],
+						'layout'       => $section['layout'],
+						'field_path'   => $controller['path'],
+						'field_name'   => $controller['name'],
+						'field_key'    => $controller['key'] ?? '',
+						'type'         => $controller['type'],
+						'old_value'    => $controller['value'] ?? '',
+						'new_value'    => $required_value,
+						'created_at'   => $change['created_at'] ?? current_time( 'mysql', true ),
+						'base_modified'=> $change['base_modified'] ?? '',
+					);
+				}
+			}
+		}
+		return $changes;
 	}
 
 	private static function changes_are_stored( array $rows, array $changes ): bool {

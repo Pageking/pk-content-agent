@@ -58,7 +58,8 @@ final class PKCA_Plugin {
 			return $value;
 		}
 
-		$changes = PKCA_Content::get_changes( (int) $post_id );
+		$inspection = PKCA_Content::inspect( (int) $post_id );
+		$changes = is_wp_error( $inspection ) ? array() : $inspection['changes'];
 		foreach ( $changes as $change ) {
 			$value = PKCA_Content::apply_change_to_value( $value, $change );
 		}

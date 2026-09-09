@@ -895,6 +895,11 @@
         state.upload = null;
         fileInput.value = '';
         clearSelection();
+		if (!['text', 'link', 'image'].includes(data.change.type)) {
+		  sessionStorage.setItem('pkca-preview-resume', String(config.postId));
+		  window.location.reload();
+		  return;
+		}
       } else if (state.selection) {
         selection.hidden = false;
       }
