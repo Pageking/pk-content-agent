@@ -109,9 +109,69 @@ final class PKCA_REST {
 				'text' => sanitize_textarea_field( (string) $item['text'] ),
 			);
 		}
+		$message = $this->normalize_editor_language( $message, $selection, $context );
 		$action = PKCA_OpenAI::interpret( $message, $context, array_slice( $history, -20 ) );
 		if ( is_wp_error( $action ) ) {
 			return $action;
+		}
+		$multi_actions = json_decode( (string) ( $action['changes_json'] ?? '' ), true );
+		if ( is_array( $multi_actions ) && count( $multi_actions ) > 1 ) {
+			$prepared = array();
+			foreach ( array_slice( $multi_actions, 0, 10 ) as $item ) {
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				if ( $selection ) {
+					$item['section'] = $selection['section'];
+				}
+				$field = $this->find_action_field( $item, $context );
+				if ( ! $field || ( $selection && (int) $item['section'] !== (int) $selection['section'] ) ) {
+					return rest_ensure_response( array( 'action' => 'clarify', 'message' => 'Ik kan niet alle gevraagde velden veilig binnen de aangewezen sectie vinden. Benoem de betreffende velden iets specifieker.' ) );
+				}
+				$item['field_name'] = $field['name'];
+				$item['field_type'] = $field['type'];
+				if ( in_array( $item['field_type'], array( 'repeater', 'gallery' ), true ) ) {
+					$item['value'] = json_decode( (string) ( $item['value_json'] ?? '' ), true );
+					if ( ! is_array( $item['value'] ) ) {
+						return new WP_Error( 'pkca_structured_value', 'Een van de voorgestelde verzamelvelden kon niet veilig worden verwerkt.', array( 'status' => 422 ) );
+					}
+				}
+				$prepared[] = array(
+					'field' => $field,
+					'item'  => $item,
+				);
+			}
+			if ( count( $prepared ) < 2 ) {
+				return rest_ensure_response( array( 'action' => 'clarify', 'message' => 'Ik kon niet alle deelopdrachten veilig vertalen naar afzonderlijke velden.' ) );
+			}
+			$queued = array();
+			foreach ( $prepared as $prepared_change ) {
+				$field = $prepared_change['field'];
+				$item = $prepared_change['item'];
+				$change = PKCA_Content::add_change(
+					$post_id,
+					array(
+						'section'     => $item['section'],
+						'field_path'  => $field['path'],
+						'field_name'  => $item['field_name'],
+						'type'        => $item['field_type'],
+						'value'       => $item['value'] ?? '',
+						'operation'   => $item['operation'] ?? 'set',
+						'search'      => $item['search'] ?? null,
+						'replacement' => $item['replacement'] ?? null,
+					)
+				);
+				if ( is_wp_error( $change ) ) {
+					return $change;
+				}
+				$queued[] = $change;
+			}
+			$updated_context = PKCA_Content::inspect( $post_id );
+			$action['change'] = $queued[0] ?? null;
+			$action['queued'] = $queued;
+			$action['changes'] = is_wp_error( $updated_context ) ? array() : $updated_context['changes'];
+			$action['message'] = count( $queued ) . ' wijzigingen zijn klaargezet.';
+			return rest_ensure_response( $action );
 		}
 		if ( ! empty( $selection ) && 'change' === ( $action['action'] ?? '' ) ) {
 			$is_structural = in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true );
@@ -174,6 +234,43 @@ final class PKCA_REST {
 			$action['changes'] = is_wp_error( $updated_context ) ? array() : $updated_context['changes'];
 		}
 		return rest_ensure_response( $action );
+	}
+
+	private function normalize_editor_language( string $message, ?array $selection, array $context ): string {
+		if ( ! $selection ) {
+			return $message;
+		}
+		$section = $context['sections'][ (int) $selection['section'] - 1 ] ?? null;
+		if ( ! is_array( $section ) ) {
+			return $message;
+		}
+		$has_button = false;
+		foreach ( (array) ( $section['fields'] ?? array() ) as $field ) {
+			$path = implode( '/', (array) ( $field['path'] ?? array() ) );
+			if ( preg_match( '#(^|/)(buttons?|cta)(/|$)#iu', $path ) ) {
+				$has_button = true;
+				break;
+			}
+		}
+		if ( $has_button ) {
+			$message = preg_replace( '/\bkop\s+tekst\b/iu', 'knoptekst', $message ) ?? $message;
+		}
+		return $message;
+	}
+
+	private function find_action_field( array $action, array $context ): ?array {
+		$section_number = absint( $action['section'] ?? 0 );
+		$path = is_array( $action['field_path'] ?? null ) ? array_map( 'strval', $action['field_path'] ) : array();
+		$section = $context['sections'][ $section_number - 1 ] ?? null;
+		if ( ! is_array( $section ) || ! $path ) {
+			return null;
+		}
+		foreach ( (array) ( $section['fields'] ?? array() ) as $field ) {
+			if ( ( $field['path'] ?? array() ) === $path && false !== ( $field['editable'] ?? true ) ) {
+				return $field;
+			}
+		}
+		return null;
 	}
 
 	private function resolve_field_from_layout_intent( array $action, string $message, array $selection, array $context ): ?array {
