@@ -76,6 +76,7 @@ final class PKCA_REST {
 			return $context;
 		}
 		$selection = $this->sanitize_selection( $request->get_param( 'selection' ) );
+		$page_wide = $this->is_page_wide_request( $original_message );
 		if ( $selection ) {
 			$selection = $this->resolve_selection( $selection, $context );
 			$section_context = $context['sections'][ $selection['section'] - 1 ] ?? array();
@@ -97,7 +98,18 @@ final class PKCA_REST {
 					)
 				)
 			);
-			$context['selection'] = $selection;
+			if ( $page_wide ) {
+				// Keep the click as conversational context, but do not let it limit an
+				// explicit request to inspect or update the complete page.
+				$context['visual_selection'] = $selection;
+				$context['request_scope'] = 'page';
+			} else {
+				$context['selection'] = $selection;
+			}
+		}
+		if ( $page_wide ) {
+			$selection = null;
+			$context['request_scope'] = 'page';
 		}
 		$history = array();
 		foreach ( (array) $request->get_param( 'history' ) as $item ) {
@@ -117,7 +129,7 @@ final class PKCA_REST {
 		$multi_actions = json_decode( (string) ( $action['changes_json'] ?? '' ), true );
 		if ( is_array( $multi_actions ) && count( $multi_actions ) > 1 ) {
 			$prepared = array();
-			foreach ( array_slice( $multi_actions, 0, 10 ) as $item ) {
+			foreach ( array_slice( $multi_actions, 0, 50 ) as $item ) {
 				if ( ! is_array( $item ) ) {
 					continue;
 				}
@@ -234,6 +246,18 @@ final class PKCA_REST {
 			$action['changes'] = is_wp_error( $updated_context ) ? array() : $updated_context['changes'];
 		}
 		return rest_ensure_response( $action );
+	}
+
+	private function is_page_wide_request( string $message ): bool {
+		$message = mb_strtolower( trim( $message ) );
+		if ( '' === $message ) {
+			return false;
+		}
+
+		return (bool) preg_match(
+			'/\b(?:hele|gehele|volledige|complete)\s+pagina\b|\b(?:heel|volledig|compleet)\s+de\s+pagina\b|\bpagina\s+(?:volledig\s+)?(?:scannen|doorlopen|controleren|opschonen)\b|\b(?:scan|doorloop|controleer|schoon)\s+(?:deze\s+|de\s+)?(?:hele\s+|gehele\s+|volledige\s+)?pagina\b|\boveral\b|\balle\s+(?:resterende\s+|overige\s+)?(?:lorem(?:\s+ipsum)?|placeholder|foute|onjuiste)\b|\b(?:nog\s+)?meer\s+(?:lorem(?:\s+ipsum)?|placeholderteksten?|foute\s+teksten?|onjuiste\s+teksten?)\b|\b(?:rest|resterende deel)\s+van\s+de\s+pagina\b|\b(?:whole|entire|complete)\s+page\b|\bpage[- ]wide\b/iu',
+			$message
+		);
 	}
 
 	private function normalize_editor_language( string $message, ?array $selection, array $context ): string {
