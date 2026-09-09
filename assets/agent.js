@@ -414,6 +414,9 @@
         ? `<input type="text"${field.type === 'link' ? ' inputmode="url"' : ''} placeholder="${escapeHtml(field.placeholder || '')}" value="${escapeHtml(plainValue)}" data-field-index="${index}" data-original="${escapeHtml(plainValue)}">`
         : `<textarea rows="4" placeholder="${escapeHtml(field.placeholder || '')}" data-field-index="${index}" data-original="${escapeHtml(plainValue)}">${escapeHtml(plainValue)}</textarea>`;
     }
+	if (field.acf_type === 'wysiwyg') {
+	  return `<div class="pkca__layout-field" ${meta}><span>${escapeHtml(label)}${field.required ? ' *' : ''}</span>${help}${control}</div>`;
+	}
     return `<label class="pkca__layout-field" ${meta}><span>${escapeHtml(label)}${field.required ? ' *' : ''}</span>${help}${control}</label>`;
   }
 
