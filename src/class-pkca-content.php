@@ -23,6 +23,7 @@ final class PKCA_Content {
 		}
 
 		$sections = array();
+		$nested_sections = array();
 		$layout_schemas = self::layout_schemas( $post_id );
 		foreach ( $rows as $row_index => $row ) {
 			$layouts = isset( $row['flex_content'] ) && is_array( $row['flex_content'] ) ? $row['flex_content'] : array();
@@ -32,13 +33,32 @@ final class PKCA_Content {
 				}
 
 				$fields = array();
+				$nested_roots = array();
 				$layout_name = (string) ( $layout['acf_fc_layout'] ?? '' );
 				if ( isset( $layout_schemas[ $layout_name ] ) ) {
 					self::apply_field_schema( $layout_schemas[ $layout_name ], $layout, array(), $fields, array() );
+					$nested_roots = self::collect_nested_flexible_sections(
+						$layout_schemas[ $layout_name ],
+						$layout,
+						array(),
+						array(),
+						$row_index,
+						$layout_index,
+						count( $sections ) + 1,
+						$nested_sections
+					);
 				}
 				// Keep the exact ACF definition order. Values that exist outside the
 				// registered schema are appended afterwards as a backwards-compatible fallback.
 				self::flatten_fields( $layout, array(), $fields );
+				if ( $nested_roots ) {
+					$fields = array_values(
+						array_filter(
+							$fields,
+							static fn( array $field ): bool => ! in_array( (string) ( $field['path'][0] ?? '' ), $nested_roots, true )
+						)
+					);
+				}
 				$sections[] = array(
 					'number'       => count( $sections ) + 1,
 					'row_index'    => $row_index,
@@ -49,6 +69,11 @@ final class PKCA_Content {
 				);
 			}
 		}
+		$sections = array_merge( $sections, $nested_sections );
+		foreach ( $sections as $section_index => &$section ) {
+			$section['number'] = $section_index + 1;
+		}
+		unset( $section );
 		$pending_changes = self::with_required_condition_changes( self::get_changes( $post_id ), $sections );
 		foreach ( $pending_changes as $pending ) {
 			$section_index = (int) ( $pending['section'] ?? 0 ) - 1;
@@ -84,6 +109,64 @@ final class PKCA_Content {
 			'link_targets' => self::link_targets(),
 			'changes'  => array_map( array( self::class, 'decorate_change' ), $pending_changes ),
 		);
+	}
+
+	private static function collect_nested_flexible_sections( array $schema, array $values, array $path, array $raw_path, int $row_index, int $layout_index, int $parent_section, array &$sections ): array {
+		$nested_roots = array();
+		foreach ( $schema as $definition ) {
+			$name = (string) ( $definition['name'] ?? '' );
+			if ( '' === $name ) {
+				continue;
+			}
+			$type = (string) ( $definition['type'] ?? '' );
+			$value = $values[ $name ] ?? null;
+			$current_path = array_merge( $path, array( $name ) );
+			$current_raw_path = array_merge( $raw_path, array( (string) ( $definition['key'] ?? $name ) ) );
+			if ( 'flexible_content' === $type && is_array( $value ) ) {
+				$nested_roots[] = (string) ( $current_path[0] ?? $name );
+				$layouts = array();
+				foreach ( (array) ( $definition['layouts'] ?? array() ) as $layout_definition ) {
+					$layouts[ (string) ( $layout_definition['name'] ?? '' ) ] = (array) ( $layout_definition['sub_fields'] ?? array() );
+				}
+				foreach ( $value as $nested_index => $nested_layout ) {
+					if ( ! is_array( $nested_layout ) ) {
+						continue;
+					}
+					$nested_name = (string) ( $nested_layout['acf_fc_layout'] ?? '' );
+					$nested_schema = $layouts[ $nested_name ] ?? array();
+					$nested_path = array_merge( $current_path, array( (string) $nested_index ) );
+					$nested_raw_path = array_merge( $current_raw_path, array( (string) $nested_index ) );
+					$fields = array();
+					self::apply_field_schema( $nested_schema, $nested_layout, $nested_path, $fields, $nested_raw_path );
+					self::flatten_fields( $nested_layout, $nested_path, $fields );
+					$sections[] = array(
+						'number'         => 0,
+						'row_index'      => $row_index,
+						'layout_index'   => $layout_index,
+						'block_id'       => '',
+						'layout'         => $nested_name ?: 'onbekend',
+						'fields'         => $fields,
+						'nested'         => true,
+						'parent_section' => $parent_section,
+						'nested_path'    => $nested_path,
+					);
+					self::collect_nested_flexible_sections( $nested_schema, $nested_layout, $nested_path, $nested_raw_path, $row_index, $layout_index, $parent_section, $sections );
+				}
+				continue;
+			}
+			if ( 'repeater' === $type && is_array( $value ) ) {
+				foreach ( $value as $item_index => $item ) {
+					if ( is_array( $item ) ) {
+						$roots = self::collect_nested_flexible_sections( (array) ( $definition['sub_fields'] ?? array() ), $item, array_merge( $current_path, array( (string) $item_index ) ), array_merge( $current_raw_path, array( (string) $item_index ) ), $row_index, $layout_index, $parent_section, $sections );
+						$nested_roots = array_merge( $nested_roots, $roots );
+					}
+				}
+			} elseif ( in_array( $type, array( 'group', 'clone' ), true ) && is_array( $value ) ) {
+				$roots = self::collect_nested_flexible_sections( (array) ( $definition['sub_fields'] ?? array() ), $value, $current_path, $current_raw_path, $row_index, $layout_index, $parent_section, $sections );
+				$nested_roots = array_merge( $nested_roots, $roots );
+			}
+		}
+		return array_values( array_unique( $nested_roots ) );
 	}
 
 	private static function layout_schemas( int $post_id ): array {

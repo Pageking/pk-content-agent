@@ -107,7 +107,13 @@
 
       const target = event.target.closest('a, button, h1, h2, h3, h4, h5, p, img') || event.target;
       const sections = getSections();
-      const sectionIndex = sections.findIndex(sectionElement => sectionElement.contains(target));
+	  const containingSections = sections
+		.map((sectionElement, index) => ({ sectionElement, index }))
+		.filter(item => item.sectionElement.contains(target));
+	  const sectionIndex = containingSections.reduce((best, item) => {
+		if (!best || best.sectionElement.contains(item.sectionElement)) return item;
+		return best;
+	  }, null)?.index ?? -1;
       const section = sections[sectionIndex];
       if (!section) {
         root.classList.remove('pkca--selecting');
@@ -122,7 +128,8 @@
         ? (target.currentSrc || target.src || '')
         : selectableText(target);
 
-      const sectionContext = state.context?.sections?.[sectionIndex];
+	  const sectionNumber = Number(section.dataset.pkcaSectionNumber || 0);
+	  const sectionContext = state.context?.sections?.find(candidate => Number(candidate.number) === sectionNumber);
       const sameVisibleTargets = isImage
         ? Array.from(section.querySelectorAll('img')).filter(element => imageKeyFromUrl(element.currentSrc || element.src) === imageKeyFromUrl(selectedValue))
         : Array.from(section.querySelectorAll(target.tagName.toLowerCase())).filter(element => selectableText(element) === selectedValue);
@@ -145,7 +152,7 @@
       }
 
       state.selection = {
-        section: sectionIndex + 1,
+		section: sectionNumber,
 		layout: sectionContext?.layout || '',
 		scope: matchedField ? 'field' : 'layout',
         type: isImage ? 'image' : 'text',
@@ -155,7 +162,7 @@
         fieldPath: matchedField?.path || null,
         fieldName: matchedField?.name || null
       };
-      state.selectedTarget = { section: sectionIndex + 1, type: state.selection.type, fieldPath: matchedField?.path || null, node: target };
+	  state.selectedTarget = { section: sectionNumber, type: state.selection.type, fieldPath: matchedField?.path || null, node: target };
       if (matchedField && sectionContext) {
         const selectionKey = `${sectionContext.row_index}:${sectionContext.layout_index}:${matchedField.path.join('.')}`;
         if (isImage) {
@@ -194,8 +201,50 @@
   }
 
   function getSections() {
-    return Array.from(document.querySelectorAll('.flex-repeater > .flex-content'))
-      .flatMap(container => Array.from(container.children));
+	return getSectionEntries().map(entry => entry.element);
+	}
+
+	function getSectionEntries() {
+	  if (!state.context?.sections) return [];
+	  const containers = Array.from(document.querySelectorAll('.flex-repeater > .flex-content'));
+	  if (!containers.length) return [];
+	  const topContexts = state.context.sections.filter(section => !section.nested);
+	  const nestedContexts = state.context.sections.filter(section => section.nested);
+	  const entries = [];
+	  const topElements = Array.from(containers[0].children);
+	  const unusedTopElements = new Set(topElements);
+	  topContexts.forEach(context => {
+		const element = findLayoutElement(context, topElements, unusedTopElements);
+		if (!element) return;
+		unusedTopElements.delete(element);
+		entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+	  });
+	  const nestedElements = containers.slice(1).flatMap(container => Array.from(container.children));
+	  const unusedElements = new Set(nestedElements);
+	  nestedContexts.forEach(context => {
+		const element = findLayoutElement(context, nestedElements, unusedElements);
+		if (!element) return;
+		unusedElements.delete(element);
+		entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+	  });
+	  entries.forEach(entry => { entry.element.dataset.pkcaSectionNumber = String(entry.context.number); });
+	  return entries;
+	}
+
+	function findLayoutElement(context, candidates, unused) {
+	  const layout = String(context.layout || '').toLowerCase();
+	  const compactLayout = layout.replace(/[^a-z0-9]/g, '');
+	  const words = layout.split(/[_-]+/).filter(Boolean);
+	  return candidates.find(candidate => {
+		if (!unused.has(candidate)) return false;
+		const classes = Array.from(candidate.classList).join(' ').toLowerCase();
+		const compactClasses = classes.replace(/[^a-z0-9]/g, '');
+		return (compactLayout && compactClasses.includes(compactLayout)) || words.every(word => classes.includes(word));
+	  });
+	}
+
+	function getSectionByNumber(sectionNumber) {
+	  return getSectionEntries().find(entry => Number(entry.context.number) === Number(sectionNumber))?.element || null;
   }
 
   async function request(path, options = {}) {
@@ -224,17 +273,19 @@
   function installLayoutButtons() {
     state.layoutButtons.forEach(button => button.remove());
     state.layoutButtons = [];
-    getSections().forEach((section, index) => {
-      if (!state.context?.sections?.[index]) return;
+	const entries = getSectionEntries();
+	entries.forEach((entry, index) => {
+	  const section = entry.element;
+	  const layout = entry.context;
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'pkca__layout-button';
       button.innerHTML = '<span aria-hidden="true">✎</span><span class="screen-reader-text">Layout bewerken</span>';
-      button.title = `Layout ${index + 1} bewerken`;
+	  button.title = `${humanize(layout.layout)} bewerken`;
       button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        openLayoutEditor(index);
+		openLayoutEditor(entry.contextIndex);
       });
       root.append(button);
       state.layoutButtons.push(button);
@@ -243,7 +294,7 @@
   }
 
   function syncLayoutButtons() {
-    const sections = getSections();
+	const sections = getSectionEntries().map(entry => entry.element);
     state.layoutButtons.forEach((button, index) => {
       const rect = sections[index]?.getBoundingClientRect();
       if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) {
@@ -635,10 +686,8 @@
   }
 
   function applyPreview(items) {
-    const sections = getSections();
-
     items.forEach(item => {
-      const section = sections[Number(item.section) - 1];
+	  const section = getSectionByNumber(item.section);
       if (!section) return;
 
       const targetKey = `${item.row_index}:${item.layout_index}:${(item.field_path || []).join('.')}`;
