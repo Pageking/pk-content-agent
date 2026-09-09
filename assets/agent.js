@@ -255,7 +255,10 @@
       headers: { 'X-WP-Nonce': config.nonce, ...(options.headers || {}) }
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message || 'Er ging iets mis.');
+    if (!response.ok) {
+      const message = normalizeText(stripHtml(String(data.message || '')));
+      throw new Error(message || 'Er ging iets mis bij het verwerken van de opdracht.');
+    }
     return data;
   }
 

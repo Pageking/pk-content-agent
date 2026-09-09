@@ -241,7 +241,7 @@ final class PKCA_REST {
 				$action['field_type'] = $selection['type'];
 			}
 		}
-		$action = $this->enforce_selected_partial_replacement( $action, $original_message, $selection );
+		$action = $this->enforce_selected_partial_replacement( $action, $original_message, $selection ?? array() );
 		if ( 'change' === ( $action['action'] ?? '' ) ) {
 			if ( in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true ) ) {
 				$decoded_value = json_decode( (string) ( $action['value_json'] ?? '' ), true );
