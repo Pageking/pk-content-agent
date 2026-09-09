@@ -3,7 +3,7 @@
  * Plugin Name: PK Content Agent
  * Plugin URI: https://github.com/Pageking/pk-content-agent
  * Description: Bewerk ACF Flexible Content via een veilige chat-preview op de frontend.
- * Version: 0.20.1
+ * Version: 0.20.2
  * Author: Pageking
  * Author URI: https://pageking.nl
  * License: GPL-2.0-or-later
@@ -14,7 +14,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'PKCA_VERSION', '0.20.1' );
+define( 'PKCA_VERSION', '0.20.2' );
 define( 'PKCA_FILE', __FILE__ );
 define( 'PKCA_DIR', plugin_dir_path( __FILE__ ) );
 

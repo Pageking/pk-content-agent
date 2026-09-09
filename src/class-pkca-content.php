@@ -743,7 +743,13 @@ final class PKCA_Content {
 			return $value;
 		}
 		if ( is_string( $value ) ) {
-			return trim( str_replace( array( "\r\n", "\r" ), "\n", html_entity_decode( $value, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
+			// ACF formats WYSIWYG subfields with wpautop() when they are read. Compare
+			// the canonical rendered form so harmless paragraph wrappers do not make
+			// a successfully stored repeater look like a failed publication.
+			$value = html_entity_decode( $value, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+			$value = wpautop( trim( str_replace( array( "\r\n", "\r" ), "\n", $value ) ) );
+			$value = preg_replace( '/>\s+</u', '><', $value );
+			return trim( (string) $value );
 		}
 		return $value;
 	}

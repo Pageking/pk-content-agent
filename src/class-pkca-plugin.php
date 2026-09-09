@@ -18,6 +18,7 @@ final class PKCA_Plugin {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'rest_api_init', array( new PKCA_REST(), 'register_routes' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend' ), 100 );
+		add_filter( 'acf/load_value/name=content_repeater', array( $this, 'apply_raw_preview' ), 100, 3 );
 		add_filter( 'acf/format_value/name=content_repeater', array( $this, 'apply_preview' ), 100, 3 );
 		add_filter( 'acf/load_value', array( $this, 'apply_sub_field_preview' ), 100, 3 );
 	}
