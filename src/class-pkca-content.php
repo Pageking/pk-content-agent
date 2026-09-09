@@ -22,9 +22,42 @@ final class PKCA_Content {
 			$rows = array();
 		}
 
+		$layout_schemas = self::layout_schemas( $post_id );
+		$base_sections = self::build_sections( $rows, $layout_schemas );
+		$pending_changes = self::with_required_condition_changes( self::get_changes( $post_id ), $base_sections );
+		$preview_rows = $rows;
+		foreach ( $pending_changes as $pending ) {
+			$preview_rows = self::apply_change_to_value( $preview_rows, $pending, false );
+		}
+		$sections = self::build_sections( $preview_rows, $layout_schemas );
+		foreach ( $sections as &$section ) {
+			foreach ( $section['fields'] as &$field ) {
+				$original = self::find_section_field( $base_sections, (int) $section['row_index'], (int) $section['layout_index'], (array) $field['path'] );
+				if ( $original && ! self::stored_values_match( $original['value'] ?? null, $field['value'] ?? null, (string) ( $field['type'] ?? '' ) ) ) {
+					$field['original_value'] = $original['value'];
+				}
+			}
+			unset( $field );
+		}
+		unset( $section );
+
+		return array(
+			'post'     => array(
+				'id'        => $post_id,
+				'title'     => get_the_title( $post_id ),
+				'post_type' => get_post_type( $post_id ),
+				'url'       => get_permalink( $post_id ),
+				'modified'  => get_post_modified_time( 'c', true, $post_id ),
+			),
+			'sections' => $sections,
+			'link_targets' => self::link_targets(),
+			'changes'  => array_map( array( self::class, 'decorate_change' ), $pending_changes ),
+		);
+	}
+
+	private static function build_sections( array $rows, array $layout_schemas ): array {
 		$sections = array();
 		$nested_sections = array();
-		$layout_schemas = self::layout_schemas( $post_id );
 		foreach ( $rows as $row_index => $row ) {
 			$layouts = isset( $row['flex_content'] ) && is_array( $row['flex_content'] ) ? $row['flex_content'] : array();
 			foreach ( $layouts as $layout_index => $layout ) {
@@ -74,41 +107,21 @@ final class PKCA_Content {
 			$section['number'] = $section_index + 1;
 		}
 		unset( $section );
-		$pending_changes = self::with_required_condition_changes( self::get_changes( $post_id ), $sections );
-		foreach ( $pending_changes as $pending ) {
-			$section_index = (int) ( $pending['section'] ?? 0 ) - 1;
-			if ( ! isset( $sections[ $section_index ] ) ) {
+		return $sections;
+	}
+
+	private static function find_section_field( array $sections, int $row_index, int $layout_index, array $path ): ?array {
+		foreach ( $sections as $section ) {
+			if ( (int) ( $section['row_index'] ?? -1 ) !== $row_index || (int) ( $section['layout_index'] ?? -1 ) !== $layout_index ) {
 				continue;
 			}
-			foreach ( $sections[ $section_index ]['fields'] as &$field ) {
-				if ( $field['path'] !== ( $pending['field_path'] ?? array() ) ) {
-					continue;
+			foreach ( (array) ( $section['fields'] ?? array() ) as $field ) {
+				if ( ( $field['path'] ?? array() ) === $path ) {
+					return $field;
 				}
-				$field['original_value'] = $field['value'];
-				$field['value'] = $pending['new_value'];
-				$field['preview'] = self::preview_value( $pending['new_value'], (string) $pending['type'] );
-				if ( 'image' === $pending['type'] ) {
-					$field['url'] = (string) ( wp_get_attachment_image_url( (int) $pending['new_value'], 'medium' ) ?: '' );
-				} elseif ( 'gallery' === $pending['type'] ) {
-					$field['images'] = self::gallery_images( (array) $pending['new_value'] );
-				}
-				break;
 			}
-			unset( $field );
 		}
-
-		return array(
-			'post'     => array(
-				'id'        => $post_id,
-				'title'     => get_the_title( $post_id ),
-				'post_type' => get_post_type( $post_id ),
-				'url'       => get_permalink( $post_id ),
-				'modified'  => get_post_modified_time( 'c', true, $post_id ),
-			),
-			'sections' => $sections,
-			'link_targets' => self::link_targets(),
-			'changes'  => array_map( array( self::class, 'decorate_change' ), $pending_changes ),
-		);
+		return null;
 	}
 
 	private static function collect_nested_flexible_sections( array $schema, array $values, array $path, array $raw_path, int $row_index, int $layout_index, int $parent_section, array &$sections ): array {
@@ -899,6 +912,9 @@ final class PKCA_Content {
 		}
 		if ( 'boolean' === $type ) {
 			return (bool) $stored === (bool) $expected;
+		}
+		if ( is_array( $stored ) || is_array( $expected ) ) {
+			return self::normalize_nested_for_compare( $stored ) == self::normalize_nested_for_compare( $expected );
 		}
 		return (string) $stored === (string) $expected;
 	}

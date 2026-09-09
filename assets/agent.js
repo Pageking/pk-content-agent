@@ -961,11 +961,9 @@
         state.upload = null;
         fileInput.value = '';
         clearSelection();
-		if ((Array.isArray(data.queued) && data.queued.length > 1) || !['text', 'link', 'image'].includes(data.change.type)) {
-		  sessionStorage.setItem('pkca-preview-resume', String(config.postId));
-		  window.location.reload();
-		  return;
-		}
+		sessionStorage.setItem('pkca-preview-resume', String(config.postId));
+		window.location.reload();
+		return;
       } else if (state.selection) {
         selection.hidden = false;
       }
