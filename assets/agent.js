@@ -318,15 +318,16 @@
 
   function syncLayoutButtons() {
 	const sections = getSectionEntries().map(entry => entry.element);
+	const topInset = stickyTopInset();
     state.layoutButtons.forEach((button, index) => {
       const rect = sections[index]?.getBoundingClientRect();
-      if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) {
+      if (!rect || rect.bottom <= topInset || rect.top > window.innerHeight) {
         button.hidden = true;
         return;
       }
       button.hidden = false;
       button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
-      button.style.top = `${Math.max(8, rect.top + 10)}px`;
+      button.style.top = `${Math.max(topInset, rect.top + 10)}px`;
     });
   }
 
@@ -361,16 +362,36 @@
   }
 
   function syncFormButtons() {
+    const topInset = stickyTopInset();
     state.formButtons.forEach(({ button, form }) => {
       const rect = form.getBoundingClientRect();
-      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.width < 1 || rect.height < 1) {
+      if (rect.bottom <= topInset || rect.top > window.innerHeight || rect.width < 1 || rect.height < 1) {
         button.hidden = true;
         return;
       }
       button.hidden = false;
       button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
-      button.style.top = `${Math.max(8, rect.top + 10)}px`;
+      button.style.top = `${Math.max(topInset, rect.top + 10)}px`;
     });
+  }
+
+  function stickyTopInset() {
+    const candidates = Array.from(document.querySelectorAll('#wpadminbar, header, nav, [class*="sticky"], [class*="fixed"]'))
+      .filter(element => !element.closest('.pkca'))
+      .map(element => ({ element, rect: element.getBoundingClientRect(), style: getComputedStyle(element) }))
+      .filter(item => ['fixed', 'sticky'].includes(item.style.position)
+        && item.style.visibility !== 'hidden'
+        && item.style.display !== 'none'
+        && item.rect.bottom > 0
+        && item.rect.width >= window.innerWidth * 0.5)
+      .sort((a, b) => a.rect.top - b.rect.top);
+    let inset = 8;
+    candidates.forEach(item => {
+      // Supports stacked bars: each next sticky element may start directly
+      // underneath the previous one instead of at viewport coordinate zero.
+      if (item.rect.top <= inset + 6) inset = Math.max(inset, item.rect.bottom + 8);
+    });
+    return Math.min(inset, Math.max(8, window.innerHeight - 42));
   }
 
   function openLayoutEditor(index) {
