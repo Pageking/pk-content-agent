@@ -60,7 +60,8 @@ final class PKCA_REST {
 	public function can_edit( WP_REST_Request $request ): bool|WP_Error {
 		$post_id = $this->request_target( $request );
 		$target = PKCA_Content::target( $post_id );
-		$allowed = ! is_wp_error( $target ) && ( 'archive' === $target['type'] ? current_user_can( 'edit_posts' ) : current_user_can( 'edit_post', (int) $target['acf_id'] ) );
+		$excluded = (array) get_option( 'pkca_excluded_post_types', array() );
+		$allowed = ! is_wp_error( $target ) && ! in_array( $target['post_type'], $excluded, true ) && ( 'archive' === $target['type'] ? current_user_can( 'edit_posts' ) : current_user_can( 'edit_post', (int) $target['acf_id'] ) );
 		return $allowed
 			? true
 			: new WP_Error( 'pkca_forbidden', 'Je mag deze pagina niet bewerken.', array( 'status' => 403 ) );
@@ -129,9 +130,11 @@ final class PKCA_REST {
 			);
 		}
 		$message = $this->normalize_editor_language( $message, $selection, $context );
+		$model_context = $context;
+		$model_context['sections'] = $this->page_wide_sections( (array) ( $context['sections'] ?? array() ), $original_message );
 		$action = $page_wide
 			? $this->interpret_page_wide( $original_message, $context, array_slice( $history, -20 ) )
-			: PKCA_OpenAI::interpret( $message, $context, array_slice( $history, -20 ) );
+			: PKCA_OpenAI::interpret( $message, $model_context, array_slice( $history, -20 ) );
 		if ( is_wp_error( $action ) ) {
 			return $action;
 		}
@@ -288,7 +291,7 @@ final class PKCA_REST {
 		$sections = (array) ( $context['sections'] ?? array() );
 		foreach ( array_chunk( $sections, 5 ) as $chunk_index => $section_chunk ) {
 			$chunk_context = $context;
-			$chunk_context['sections'] = $section_chunk;
+			$chunk_context['sections'] = $this->page_wide_sections( $section_chunk, $message );
 			$chunk_context['request_scope'] = 'page_chunk';
 			$chunk_context['chunk'] = array(
 				'number' => $chunk_index + 1,
@@ -400,6 +403,7 @@ final class PKCA_REST {
 				static fn( array $change ): bool => isset( $placeholder_keys[ (int) ( $change['section'] ?? 0 ) . ':' . implode( '.', (array) ( $change['field_path'] ?? array() ) ) ] )
 			);
 		}
+		$all_changes = $this->limit_changes_to_mentioned_content( $message, $context, $all_changes );
 
 		if ( array() === $all_changes ) {
 			return array(
@@ -484,6 +488,75 @@ final class PKCA_REST {
 		$mentions_placeholders = (bool) preg_match( '/\b(?:lorem(?:\s+ipsum)?|placeholderteksten?|dummyteksten?|voorbeeldteksten?)\b/iu', $message );
 		$also_requests_audit = (bool) preg_match( '/\b(?:spelling|spelfout|spelfouten|grammatica|inconsistent|inconsistenties|tone of voice|schrijfstijl|redactionele audit)\b/iu', $message );
 		return $mentions_placeholders && ! $also_requests_audit;
+	}
+
+	private function page_wide_sections( array $sections, string $message ): array {
+		$structural = (bool) preg_match( '/\b(?:voeg(?:en)?|verwijder(?:en)?|wis|vul)\b.{0,45}\b(?:rijen?|items?|vragen?|faq|kaarten?|knoppen?|stappen?)\b/iu', $message );
+		$text_only = $this->is_text_quality_request( $message );
+		$presentation = (bool) preg_match( '/\b(?:icoon|iconen|icon|icons|kleur|kleuren|headingtag|html-tag|opmaak|variant|achtergrond)\b/iu', $message );
+		foreach ( $sections as &$section ) {
+			$fields = (array) ( $section['fields'] ?? array() );
+			$paths = array_map( static fn( array $field ): array => array_map( 'strval', (array) ( $field['path'] ?? array() ) ), $fields );
+			$section['fields'] = array_values(
+				array_filter(
+					$fields,
+					static function ( array $field ) use ( $paths, $structural, $text_only, $presentation ): bool {
+						$path = array_map( 'strtolower', array_map( 'strval', (array) ( $field['path'] ?? array() ) ) );
+						if ( ! $presentation && array_intersect( $path, array( 'icon', 'icon_type', 'icon_name_library', 'icon_name_custom', 'tag', 'variant', 'color', 'background', 'background_shape', 'show_shape', 'show_cursor' ) ) ) {
+							return false;
+						}
+						if ( false === ( $field['editable'] ?? true ) ) {
+							return true;
+						}
+						if ( $text_only && 'text' !== ( $field['type'] ?? '' ) ) {
+							return false;
+						}
+						if ( 'repeater' !== ( $field['type'] ?? '' ) || $structural ) {
+							return true;
+						}
+						foreach ( $paths as $candidate ) {
+							if ( count( $candidate ) > count( $path ) && $path === array_slice( $candidate, 0, count( $path ) ) ) {
+								return false;
+							}
+						}
+						return true;
+					}
+				)
+			);
+		}
+		unset( $section );
+		return $sections;
+	}
+
+	private function limit_changes_to_mentioned_content( string $message, array $context, array $changes ): array {
+		if ( ! preg_match( '/\balle\s+teksten\s+die(?:\s+nog)?\s+over\s+(.+?)\s+gaan\b/iu', $message, $matches ) ) {
+			return $changes;
+		}
+		$terms = preg_split( '/\s*(?:,|\ben\b|\bof\b|\/)\s*/iu', $matches[1], -1, PREG_SPLIT_NO_EMPTY );
+		$terms = array_values( array_filter( array_map( static fn( string $term ): string => trim( $term, " \t\n\r\0\x0B\"'“”" ), $terms ), static fn( string $term ): bool => mb_strlen( $term ) >= 2 ) );
+		if ( ! $terms ) {
+			return $changes;
+		}
+		$allowed = array();
+		foreach ( (array) ( $context['sections'] ?? array() ) as $section ) {
+			foreach ( (array) ( $section['fields'] ?? array() ) as $field ) {
+				$field_value = $field['value'] ?? '';
+				if ( ! is_scalar( $field_value ) ) {
+					continue;
+				}
+				$value = html_entity_decode( wp_strip_all_tags( (string) $field_value ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+				foreach ( $terms as $term ) {
+					if ( false !== mb_stripos( $value, $term ) ) {
+						$allowed[ (int) $section['number'] . ':' . implode( '.', (array) $field['path'] ) ] = true;
+						break;
+					}
+				}
+			}
+		}
+		return array_filter(
+			$changes,
+			static fn( array $change ): bool => isset( $allowed[ (int) ( $change['section'] ?? 0 ) . ':' . implode( '.', (array) ( $change['field_path'] ?? array() ) ) ] )
+		);
 	}
 
 	private function response_changes( array $result ): array {

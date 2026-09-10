@@ -60,7 +60,7 @@ body:has(.pkca--selecting){cursor:crosshair!important}body:has(.pkca--selecting)
 .pkca__layout-button{position:fixed;z-index:2147482998;display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid rgba(19,48,60,.18);border-radius:50%;background:var(--pkca-cream);color:var(--pkca-ink);box-shadow:0 5px 18px rgba(19,48,60,.2);font:700 17px/1 Arial,sans-serif;cursor:pointer;transition:transform .15s ease,background .15s ease}
 .pkca__layout-button:hover{transform:scale(1.08);background:var(--pkca-mint)}
 .pkca__layout-button[hidden]{display:none}
-.pkca__form-button{text-decoration:none}.pkca__form-button .pkca__link-icon{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pkca__form-button,.pkca__content-button{text-decoration:none}.pkca__link-icon{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .pkca__layout-editor{display:flex;flex:1 1 auto;min-height:0;overflow:hidden;background:#f5f6f3;flex-direction:column}
 .pkca__layout-editor[hidden],.pkca__messages[hidden],.pkca__form[hidden]{display:none}
 .pkca__layout-editor-header{position:relative;z-index:2;display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;padding:11px 12px;border-bottom:1px solid rgba(19,48,60,.1);background:var(--pkca-cream)}

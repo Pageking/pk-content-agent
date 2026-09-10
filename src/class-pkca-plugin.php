@@ -30,14 +30,14 @@ final class PKCA_Plugin {
 		}
 		if ( is_singular() ) {
 			$post_id = (int) get_queried_object_id();
-			if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+			if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) || ! $this->post_type_is_enabled( (string) get_post_type( $post_id ) ) ) {
 				return;
 			}
 			$target = (string) $post_id;
 			$title = get_the_title( $post_id );
 		} elseif ( is_post_type_archive() ) {
 			$post_type = get_queried_object();
-			if ( ! $post_type instanceof WP_Post_Type || ! current_user_can( 'edit_posts' ) ) {
+			if ( ! $post_type instanceof WP_Post_Type || ! current_user_can( 'edit_posts' ) || ! $this->post_type_is_enabled( $post_type->name ) ) {
 				return;
 			}
 			$target = 'archive:' . $post_type->name;
@@ -68,7 +68,7 @@ final class PKCA_Plugin {
 	}
 
 	public function apply_preview( mixed $value, int|string $post_id, array $field ): mixed {
-		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! is_user_logged_in() || ! is_array( $value ) ) {
+		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! is_user_logged_in() || ! is_array( $value ) || ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
 			return $value;
 		}
 
@@ -82,7 +82,7 @@ final class PKCA_Plugin {
 	}
 
 	public function apply_raw_preview( mixed $value, mixed $post_id, array $field ): mixed {
-		if ( is_admin() || ! is_user_logged_in() || ! is_numeric( $post_id ) || (int) $post_id < 1 ) {
+		if ( is_admin() || ! is_user_logged_in() || ! is_numeric( $post_id ) || (int) $post_id < 1 || ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
 			return $value;
 		}
 		return PKCA_Content::apply_changes_to_raw_value( $value, (int) $post_id );
@@ -93,6 +93,9 @@ final class PKCA_Plugin {
 			return $value;
 		}
 		if ( is_numeric( $post_id ) && (int) $post_id > 0 ) {
+			if ( ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
+				return $value;
+			}
 			return 'content_repeater' === ( $field['name'] ?? '' ) ? $value : PKCA_Content::preview_sub_field_value( $value, (int) $post_id, $field );
 		}
 		$target = $this->current_archive_target();
@@ -129,7 +132,11 @@ final class PKCA_Plugin {
 			return '';
 		}
 		$post_type = get_queried_object();
-		return $post_type instanceof WP_Post_Type ? 'archive:' . $post_type->name : '';
+		return $post_type instanceof WP_Post_Type && $this->post_type_is_enabled( $post_type->name ) ? 'archive:' . $post_type->name : '';
+	}
+
+	private function post_type_is_enabled( string $post_type ): bool {
+		return '' !== $post_type && ! in_array( $post_type, (array) get_option( 'pkca_excluded_post_types', array() ), true );
 	}
 
 	public function register_settings(): void {
@@ -161,6 +168,17 @@ final class PKCA_Plugin {
 				'show_in_rest'      => false,
 			)
 		);
+		register_setting( 'pkca_settings', 'pkca_context_source_posts', array( 'type' => 'array', 'default' => array(), 'sanitize_callback' => array( $this, 'sanitize_context_source_posts' ), 'show_in_rest' => false ) );
+		register_setting( 'pkca_settings', 'pkca_excluded_post_types', array( 'type' => 'array', 'default' => array(), 'sanitize_callback' => array( $this, 'sanitize_excluded_post_types' ), 'show_in_rest' => false ) );
+	}
+
+	public function sanitize_context_source_posts( mixed $value ): array {
+		return array_values( array_slice( array_filter( array_unique( array_map( 'absint', is_array( $value ) ? $value : array() ) ), 'get_post' ), 0, 10 ) );
+	}
+
+	public function sanitize_excluded_post_types( mixed $value ): array {
+		$public = get_post_types( array( 'public' => true ), 'names' );
+		return array_values( array_intersect( array_map( 'sanitize_key', is_array( $value ) ? $value : array() ), $public ) );
 	}
 
 	public function sanitize_company_context( mixed $value ): array {
@@ -200,6 +218,10 @@ final class PKCA_Plugin {
 			'terminology' => array( 'Terminologie en schrijfregels', 'Welke woorden, schrijfwijzen en CTA-stijlen gebruiken of vermijden we?', 'Bijvoorbeeld: schrijf de bedrijfsnaam altijd op dezelfde manier; gebruik adviseur in plaats van consultant; vermijd...' ),
 			'facts'       => array( 'Feiten, bewijs en beperkingen', 'Noteer controleerbare feiten en claims die gebruikt mogen worden. Zet hier ook wat de agent nooit mag aannemen of verzinnen.', 'Bijvoorbeeld: actief vanuit 8 vestigingen; geen aantallen of garanties noemen zonder bron...' ),
 		);
+		$source_ids = array_map( 'absint', (array) get_option( 'pkca_context_source_posts', array() ) );
+		$source_posts = get_posts( array( 'post_type' => array_values( array_diff( get_post_types( array( 'public' => true ), 'names' ), array( 'attachment' ) ) ), 'post_status' => 'publish', 'posts_per_page' => 250, 'orderby' => 'title', 'order' => 'ASC' ) );
+		$excluded_post_types = (array) get_option( 'pkca_excluded_post_types', array() );
+		$public_post_types = get_post_types( array( 'public' => true ), 'objects' );
 		?>
 		<div class="wrap">
 			<h1>PK Content Agent</h1>
@@ -232,6 +254,21 @@ final class PKCA_Plugin {
 						</tr>
 					<?php endforeach; ?>
 				</table>
+				<h2>Contextbronnen</h2>
+				<p>Selecteer maximaal tien betrouwbare pagina’s of berichten. Hun zichtbare tekst wordt als aanvullende bron gebruikt; deze inhoud overschrijft de handmatige briefing niet.</p>
+				<select class="regular-text" name="pkca_context_source_posts[]" multiple size="8" style="min-width:420px">
+					<?php foreach ( $source_posts as $source_post ) : ?>
+						<option value="<?= (int) $source_post->ID; ?>" <?= selected( in_array( (int) $source_post->ID, $source_ids, true ), true, false ); ?>><?= esc_html( get_the_title( $source_post ) . ' — ' . get_post_type_object( $source_post->post_type )->labels->singular_name ); ?></option>
+					<?php endforeach; ?>
+				</select>
+				<p class="description">Gebruik Cmd/Ctrl om meerdere bronnen te selecteren.</p>
+				<h2>Beschikbaarheid</h2>
+				<p>Selecteer de post types waarop de content-assistent volledig uitgeschakeld moet zijn, inclusief het bijbehorende archief.</p>
+				<fieldset>
+					<?php foreach ( $public_post_types as $post_type ) : if ( 'attachment' === $post_type->name ) continue; ?>
+						<label style="display:block;margin:7px 0"><input type="checkbox" name="pkca_excluded_post_types[]" value="<?= esc_attr( $post_type->name ); ?>" <?= checked( in_array( $post_type->name, $excluded_post_types, true ), true, false ); ?>> <?= esc_html( $post_type->labels->name ); ?> <code><?= esc_html( $post_type->name ); ?></code></label>
+					<?php endforeach; ?>
+				</fieldset>
 				<?php submit_button(); ?>
 			</form>
 		</div>

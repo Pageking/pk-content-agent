@@ -10,7 +10,7 @@
   const historyKey = `pkca-history-${config.version || 'current'}-${config.postId}`;
   const positionKey = `pkca-position-${config.postId}`;
   const sizeKey = `pkca-size-${config.postId}`;
-  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], activeLayout: null, previewTargets: new Map() };
+  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, previewTargets: new Map() };
   const root = document.createElement('div');
   root.className = 'pkca';
   root.innerHTML = `
@@ -59,15 +59,18 @@
   window.addEventListener('resize', syncLayoutButtons);
   window.addEventListener('scroll', syncFormButtons, { passive: true });
   window.addEventListener('resize', syncFormButtons);
+  window.addEventListener('scroll', syncContentButtons, { passive: true });
+  window.addEventListener('resize', syncContentButtons);
   installFormButtons();
-  if (config.formsEditUrl) {
-    let formScanQueued = false;
+  {
+    let editorScanQueued = false;
     new MutationObserver(() => {
-      if (formScanQueued) return;
-      formScanQueued = true;
+      if (editorScanQueued) return;
+      editorScanQueued = true;
       requestAnimationFrame(() => {
-        formScanQueued = false;
+        editorScanQueued = false;
         installFormButtons();
+        installContentButtons();
       });
     }).observe(document.body, { childList: true, subtree: true });
   }
@@ -288,6 +291,7 @@
       applyPreview(state.context.changes || []);
       renderChanges(state.context.changes || []);
       installLayoutButtons();
+      installContentButtons();
     } catch (error) {
       addMessage(error.message, 'error');
     }
@@ -373,6 +377,66 @@
       button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
       button.style.top = `${Math.max(topInset, rect.top + 10)}px`;
     });
+  }
+
+  function installContentButtons() {
+    const targets = new Map((state.context?.link_targets || []).filter(target => target.edit_url).map(target => [normalizedPath(target.url), target]));
+    const sections = getSections();
+    const found = [];
+    const usedCards = new Set();
+    sections.forEach(section => {
+      section.querySelectorAll('a[href]').forEach(anchor => {
+        const target = targets.get(normalizedPath(anchor.href));
+        if (!target) return;
+        const card = anchor.closest('article, li, [class*="card"], [class*="slide"], [class*="item"]');
+        if (!card || !section.contains(card) || usedCards.has(card)) return;
+        usedCards.add(card);
+        found.push({ card, target });
+      });
+    });
+    const activeCards = new Set(found.map(item => item.card));
+    state.contentButtons = state.contentButtons.filter(item => {
+      if (activeCards.has(item.card) && item.card.isConnected) return true;
+      item.button.remove();
+      return false;
+    });
+    found.forEach(({ card, target }) => {
+      if (state.contentButtons.some(item => item.card === card)) return;
+      const button = document.createElement('a');
+      button.className = 'pkca__layout-button pkca__content-button';
+      button.href = target.edit_url;
+      button.target = '_blank';
+      button.rel = 'noopener';
+      button.innerHTML = '<svg class="pkca__link-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M10.6 13.4a2 2 0 0 0 2.8 0l3-3a2 2 0 1 0-2.8-2.8l-1.2 1.2M13.4 10.6a2 2 0 0 0-2.8 0l-3 3a2 2 0 1 0 2.8 2.8l1.2-1.2"/></svg><span class="screen-reader-text">Gekoppelde content bewerken</span>';
+      button.title = `${target.title || 'Gekoppelde content'} bewerken`;
+      button.addEventListener('click', event => event.stopPropagation());
+      root.append(button);
+      state.contentButtons.push({ button, card });
+    });
+    syncContentButtons();
+  }
+
+  function syncContentButtons() {
+    const topInset = stickyTopInset();
+    state.contentButtons.forEach(({ button, card }) => {
+      const rect = card.getBoundingClientRect();
+      if (!card.isConnected || rect.bottom <= topInset || rect.top > window.innerHeight || rect.width < 1 || rect.height < 1) {
+        button.hidden = true;
+        return;
+      }
+      button.hidden = false;
+      button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
+      button.style.top = `${Math.max(topInset, rect.top + 10)}px`;
+    });
+  }
+
+  function normalizedPath(value) {
+    try {
+      const url = new URL(value, window.location.origin);
+      return `${url.pathname.replace(/\/$/, '') || '/'}${url.search}`;
+    } catch (_) {
+      return '';
+    }
   }
 
   function stickyTopInset() {

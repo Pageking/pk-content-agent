@@ -449,7 +449,7 @@ final class PKCA_Content {
 		foreach ( get_posts( array( 'post_type' => $post_types, 'post_status' => 'publish', 'posts_per_page' => 500, 'orderby' => 'title', 'order' => 'ASC' ) ) as $post ) {
 			$url = get_permalink( $post );
 			if ( $url ) {
-				$targets[] = array( 'title' => get_the_title( $post ), 'url' => wp_make_link_relative( $url ), 'post_type' => $post->post_type );
+				$targets[] = array( 'id' => $post->ID, 'title' => get_the_title( $post ), 'url' => wp_make_link_relative( $url ), 'post_type' => $post->post_type, 'edit_url' => current_user_can( 'edit_post', $post->ID ) ? wp_make_link_relative( get_edit_post_link( $post->ID, 'raw' ) ) : '' );
 			}
 		}
 		return $targets;

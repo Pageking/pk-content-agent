@@ -21,6 +21,10 @@ final class PKCA_OpenAI {
 			static fn( mixed $value ): bool => '' !== trim( (string) $value )
 		);
 		$company_context['website_name'] = get_bloginfo( 'name' );
+		$source_context = self::source_context();
+		if ( $source_context ) {
+			$company_context['selected_source_pages'] = $source_context;
+		}
 
 		$payload = array(
 			'model'        => (string) get_option( 'pkca_openai_model', 'gpt-5.4-mini' ),
@@ -56,44 +60,89 @@ final class PKCA_OpenAI {
 			),
 		);
 
-		$response = wp_remote_post(
-			'https://api.openai.com/v1/responses',
-			array(
-				'timeout' => 90,
-				'headers' => array( 'Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json' ),
-				'body'    => wp_json_encode( $payload ),
-			)
-		);
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		$body = json_decode( wp_remote_retrieve_body( $response ), true );
-		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
-			return new WP_Error( 'pkca_openai_error', (string) ( $body['error']['message'] ?? 'OpenAI gaf een fout terug.' ), array( 'status' => 502 ) );
-		}
-
-		$text = (string) ( $body['output_text'] ?? '' );
-		if ( '' === $text && isset( $body['output'] ) ) {
-			foreach ( $body['output'] as $item ) {
-				foreach ( $item['content'] ?? array() as $content ) {
-					if ( isset( $content['text'] ) ) {
-						$text .= $content['text'];
+		$body = array();
+		$incomplete_reason = '';
+		$refusal = '';
+		for ( $attempt = 1; $attempt <= 2; $attempt++ ) {
+			if ( 2 === $attempt ) {
+				$payload['input'] .= "\n\nHERSTELPOGING: het vorige antwoord kon niet als het verplichte schema worden gelezen. Geef uitsluitend een compleet geldig schema-antwoord. Splits meerdere wijzigingen via changes_json en laat geen verplicht veld weg.";
+			}
+			$response = wp_remote_post(
+				'https://api.openai.com/v1/responses',
+				array(
+					'timeout' => 90,
+					'headers' => array( 'Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json' ),
+					'body'    => wp_json_encode( $payload ),
+				)
+			);
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+			$body = json_decode( wp_remote_retrieve_body( $response ), true );
+			if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
+				return new WP_Error( 'pkca_openai_error', (string) ( $body['error']['message'] ?? 'OpenAI gaf een fout terug.' ), array( 'status' => 502 ) );
+			}
+			$text = (string) ( $body['output_text'] ?? '' );
+			if ( '' === $text && isset( $body['output'] ) ) {
+				foreach ( $body['output'] as $item ) {
+					foreach ( $item['content'] ?? array() as $content ) {
+						$text .= (string) ( $content['text'] ?? '' );
+						$refusal .= (string) ( $content['refusal'] ?? '' );
 					}
 				}
 			}
+			$action = json_decode( $text, true );
+			if ( is_array( $action ) ) {
+				return $action;
+			}
+			$incomplete_reason = (string) ( $body['incomplete_details']['reason'] ?? '' );
 		}
-		$action = json_decode( $text, true );
-		if ( is_array( $action ) ) {
-			return $action;
-		}
-		$incomplete_reason = (string) ( $body['incomplete_details']['reason'] ?? '' );
 		return new WP_Error(
 			'pkca_invalid_response',
-			$incomplete_reason
+			$refusal
+				? 'De agent kon deze opdracht niet veilig uitvoeren: ' . sanitize_text_field( $refusal )
+				: ( $incomplete_reason
 				? 'De volledige pagina-analyse paste niet in één antwoord. Probeer de opdracht opnieuw of werk per gedeelte.'
-				: 'De agent gaf geen geldig antwoord terug.',
+				: 'Het antwoord kon ook na een automatische herstelpoging niet worden verwerkt. Probeer de opdracht per onderdeel.' ),
 			array( 'status' => 502, 'reason' => $incomplete_reason )
 		);
+	}
+
+	private static function source_context(): array {
+		$result = array();
+		$remaining = 12000;
+		foreach ( array_slice( array_map( 'absint', (array) get_option( 'pkca_context_source_posts', array() ) ), 0, 10 ) as $post_id ) {
+			$post = get_post( $post_id );
+			if ( ! $post || 'publish' !== $post->post_status || $remaining < 100 ) {
+				continue;
+			}
+			$parts = array_filter( array( get_the_title( $post ), $post->post_excerpt, $post->post_content ) );
+			if ( function_exists( 'get_field' ) ) {
+				self::collect_source_strings( get_field( 'content_repeater', $post_id ), $parts );
+			}
+			$text = trim( (string) preg_replace( '/\s+/u', ' ', wp_strip_all_tags( implode( "\n", $parts ) ) ) );
+			$text = mb_substr( $text, 0, min( 4000, $remaining ) );
+			if ( '' !== $text ) {
+				$result[] = array( 'title' => get_the_title( $post ), 'post_type' => $post->post_type, 'content' => $text );
+				$remaining -= mb_strlen( $text );
+			}
+		}
+		return $result;
+	}
+
+	private static function collect_source_strings( mixed $value, array &$parts ): void {
+		if ( is_string( $value ) && '' !== trim( wp_strip_all_tags( $value ) ) ) {
+			$parts[] = $value;
+			return;
+		}
+		if ( ! is_array( $value ) ) {
+			return;
+		}
+		foreach ( $value as $key => $item ) {
+			if ( in_array( (string) $key, array( 'acf_fc_layout', 'url', 'icon', 'color', 'background' ), true ) ) {
+				continue;
+			}
+			self::collect_source_strings( $item, $parts );
+		}
 	}
 }

@@ -24,6 +24,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Inventariseert `content_repeater → flex_content` zonder layouts hard te coderen.
 - Ondersteunt ook post-typearchieven waarvan de automatische optionspagina het veld `{post_type}_content_repeater` bevat, zoals `location_content_repeater`.
 - Gebruikt een vaste bedrijfsbriefing voor doelgroep, diensten, positionering, tone of voice, terminologie en controleerbare claims.
+- Kan maximaal tien geselecteerde bronpagina’s als aanvullende bedrijfscontext gebruiken.
 - Ondersteunt bestaande tekst-, WYSIWYG- en afbeeldingsvelden.
 - Afbeeldingen kunnen in het chatvenster worden geüpload.
 - De chat blijft tijdens de bewerksessie open en bewaart de laatste 100 berichten per pagina in de browsertab.
@@ -33,6 +34,8 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Wijzigingen zijn eerst een gebruikersgebonden preview van twee uur.
 - **Wijzigingen opslaan** en **Alles ongedaan maken** zijn expliciete handelingen.
 - Alleen bevoegde gebruikers krijgen toegang: `edit_post` op gewone pagina’s en `edit_posts` op post-typearchieven.
+- Post types kunnen via de instellingen volledig van de frontend-assistent worden uitgesloten.
+- Dynamisch gekoppelde berichten en Gravity Forms-formulieren krijgen waar mogelijk een directe beheerlink.
 
 ## Bewuste beperkingen
 
