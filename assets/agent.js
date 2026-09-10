@@ -388,8 +388,14 @@
     const usedCards = new Set();
     sections.forEach(section => {
       section.querySelectorAll('a[href]').forEach(anchor => {
+        const anchorUrl = new URL(anchor.href, window.location.href);
+        // An in-page CTA such as href="#contact" resolves to the current
+        // permalink. It is navigation within this page, not linked content
+        // that needs a separate WordPress edit shortcut.
+        if (anchorUrl.origin === window.location.origin && anchorUrl.hash && normalizedPath(anchorUrl.href) === normalizedPath(window.location.href)) return;
         const target = targets.get(normalizedPath(anchor.href));
         if (!target) return;
+        if (String(target.id) === String(config.postId)) return;
         const card = anchor.closest('article, li, [class*="card"], [class*="slide"], [class*="item"]');
         if (!card || !section.contains(card) || usedCards.has(card)) return;
         usedCards.add(card);
