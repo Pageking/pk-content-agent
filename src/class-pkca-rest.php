@@ -346,6 +346,46 @@ final class PKCA_REST {
 			}
 		}
 
+		$quality_targets = $this->critical_quality_fields( $message, $context );
+		if ( $quality_targets ) {
+			$quality_context = $context;
+			$quality_context['request_scope'] = 'quality_audit';
+			$quality_context['required_targets'] = array_map(
+				static fn( array $target ): array => array(
+					'section'    => $target['section'],
+					'field_path' => $target['field']['path'],
+					'label'      => $target['field']['label'] ?? $target['field']['name'] ?? '',
+					'value'      => $target['field']['value'] ?? '',
+				),
+				$quality_targets
+			);
+			$quality_context['proposed_changes'] = array_values( $all_changes );
+			$quality_sections = array();
+			foreach ( $quality_targets as $target ) {
+				$number = (int) $target['section'];
+				if ( ! isset( $quality_sections[ $number ] ) ) {
+					$quality_sections[ $number ] = $target['section_data'];
+					$quality_sections[ $number ]['fields'] = array();
+				}
+				$quality_sections[ $number ]['fields'][] = $target['field'];
+			}
+			$quality_context['sections'] = array_values( $quality_sections );
+			unset( $quality_context['selection'], $quality_context['visual_selection'] );
+			$quality_message = $message . "\n\nKRITIEKE REDACTIONELE CONTROLE: beoordeel de aangeleverde hero als één samenhangend blok binnen het paginaonderwerp. Corrigeer spelling en grammatica, controleer of intro en CTA inhoudelijk aansluiten op paginatitel en bedrijfscontext, en behoud correcte velden. Geef alleen werkelijk benodigde wijzigingen terug. Controleer ieder required_target expliciet; laat een correct veld weg.";
+			$result = PKCA_OpenAI::interpret( $quality_message, $quality_context, $history );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $result;
+			} else {
+				foreach ( $this->response_changes( $result ) as $candidate ) {
+					if ( ! is_array( $candidate ) || empty( $candidate['section'] ) || empty( $candidate['field_path'] ) ) {
+						continue;
+					}
+					$key = (int) $candidate['section'] . ':' . implode( '.', (array) $candidate['field_path'] );
+					$all_changes[ $key ] = $candidate;
+				}
+			}
+		}
+
 		if ( array() === $all_changes ) {
 			if ( $errors ) {
 				return $errors[0];
@@ -353,6 +393,30 @@ final class PKCA_REST {
 			return array(
 				'action'       => 'answer',
 				'message'      => 'De volledige pagina is gecontroleerd, maar er zijn geen concrete nieuwe wijzigingen gevonden.',
+				'section'      => null,
+				'field_path'   => null,
+				'field_name'   => null,
+				'field_type'   => null,
+				'value'        => null,
+				'value_json'   => null,
+				'changes_json' => null,
+				'operation'    => null,
+				'search'       => null,
+				'replacement'  => null,
+			);
+		}
+
+		if ( $this->is_text_quality_request( $message ) ) {
+			$all_changes = array_filter(
+				$all_changes,
+				static fn( array $change ): bool => 'text' === ( $change['field_type'] ?? '' )
+			);
+		}
+
+		if ( array() === $all_changes ) {
+			return array(
+				'action'       => 'answer',
+				'message'      => 'De volledige pagina is gecontroleerd, maar er zijn geen concrete nieuwe tekstwijzigingen gevonden.',
 				'section'      => null,
 				'field_path'   => null,
 				'field_name'   => null,
@@ -440,6 +504,36 @@ final class PKCA_REST {
 			}
 		}
 		return $targets;
+	}
+
+	private function critical_quality_fields( string $message, array $context ): array {
+		if ( ! preg_match( '/\b(?:spelling|spelfout|spelfouten|grammatica|inconsistent|inconsistenties|controleer|check|verbeter|opschonen)\b/iu', $message ) ) {
+			return array();
+		}
+
+		$targets = array();
+		foreach ( (array) ( $context['sections'] ?? array() ) as $section ) {
+			$layout = mb_strtolower( (string) ( $section['layout'] ?? $section['name'] ?? '' ) );
+			if ( ! str_contains( $layout, 'hero' ) ) {
+				continue;
+			}
+			foreach ( (array) ( $section['fields'] ?? array() ) as $field ) {
+				if ( 'text' !== ( $field['type'] ?? '' ) || false === ( $field['editable'] ?? true ) ) {
+					continue;
+				}
+				$path_text = mb_strtolower( implode( '/', array_map( 'strval', (array) ( $field['path'] ?? array() ) ) ) );
+				if ( ! preg_match( '#(?:heading(?:/text)?|title|titel|intro|text|tekst|subtitle|subtitel|button(?:s)?/.+/(?:title|text|label)|cta/.+/(?:title|text|label))$#u', $path_text ) ) {
+					continue;
+				}
+				$targets[] = array( 'section' => (int) ( $section['number'] ?? 0 ), 'section_data' => $section, 'field' => $field );
+			}
+		}
+		return $targets;
+	}
+
+	private function is_text_quality_request( string $message ): bool {
+		return (bool) preg_match( '/\b(?:spelling|spelfout|spelfouten|grammatica|inconsistent|inconsistenties|lorem(?:\s+ipsum)?|placeholderteksten?|teksten?|content)\b/iu', $message )
+			&& ! preg_match( '/\b(?:afbeelding|afbeeldingen|foto|foto(?:s|\'s)|beeld|icoon|iconen|kleur|kleuren|layout|opmaak)\b/iu', $message );
 	}
 
 	private function is_page_wide_request( string $message ): bool {
