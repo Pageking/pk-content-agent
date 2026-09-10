@@ -321,7 +321,7 @@
     layoutEditor.hidden = false;
     const layoutFields = layout.fields || [];
     layoutEditor.innerHTML = `<header class="pkca__layout-editor-header"><div><strong>Layout ${layout.number}</strong><small>${escapeHtml(humanize(layout.layout))}</small></div><button type="button" aria-label="Layout-editor sluiten">×</button></header>
-      <form class="pkca__layout-form">${layoutFieldsMarkup(layoutFields, layout.number)}
+      <form class="pkca__layout-form"><div class="pkca__layout-fields">${layoutFieldsMarkup(layoutFields, layout.number)}</div>
         <div class="pkca__layout-status" role="status" aria-live="polite" hidden></div>
         <button class="pkca__layout-save" type="submit">Wijzigingen klaarzetten</button></form>`;
     layoutEditor.querySelector('.pkca__layout-editor-header button').addEventListener('click', event => {
