@@ -294,28 +294,7 @@ final class PKCA_REST {
 				$errors[] = $result;
 				continue;
 			}
-			$chunk_changes = json_decode( (string) ( $result['changes_json'] ?? '' ), true );
-			if ( ! is_array( $chunk_changes ) ) {
-				$chunk_changes = array();
-			}
-			if ( 'change' === ( $result['action'] ?? '' ) && isset( $result['section'], $result['field_path'] ) ) {
-				$single = array_intersect_key(
-					$result,
-					array_flip( array( 'section', 'field_path', 'field_name', 'field_type', 'value', 'value_json', 'operation', 'search', 'replacement' ) )
-				);
-				$single_key = (int) ( $single['section'] ?? 0 ) . ':' . implode( '.', (array) ( $single['field_path'] ?? array() ) );
-				$already_present = false;
-				foreach ( $chunk_changes as $candidate ) {
-					$candidate_key = (int) ( $candidate['section'] ?? 0 ) . ':' . implode( '.', (array) ( $candidate['field_path'] ?? array() ) );
-					if ( $candidate_key === $single_key ) {
-						$already_present = true;
-						break;
-					}
-				}
-				if ( ! $already_present ) {
-					$chunk_changes[] = $single;
-				}
-			}
+			$chunk_changes = $this->response_changes( $result );
 			foreach ( $chunk_changes as $candidate ) {
 				if ( ! is_array( $candidate ) || empty( $candidate['section'] ) || empty( $candidate['field_path'] ) ) {
 					continue;
@@ -325,6 +304,45 @@ final class PKCA_REST {
 				if ( count( $all_changes ) >= 50 ) {
 					break 2;
 				}
+			}
+		}
+
+		$missing_placeholders = $this->uncovered_placeholder_fields( $context, $all_changes );
+		foreach ( array_chunk( $missing_placeholders, 10 ) as $required_chunk ) {
+			$required_context = $context;
+			$required_context['request_scope'] = 'required_fields';
+			$required_context['required_targets'] = array_map(
+				static fn( array $target ): array => array(
+					'section'    => $target['section'],
+					'field_path' => $target['field']['path'],
+					'label'      => $target['field']['label'] ?? $target['field']['name'] ?? '',
+					'value'      => $target['field']['value'] ?? '',
+				),
+				$required_chunk
+			);
+			$required_sections = array();
+			foreach ( $required_chunk as $target ) {
+				$section_number = (int) $target['section'];
+				if ( ! isset( $required_sections[ $section_number ] ) ) {
+					$required_sections[ $section_number ] = $target['section_data'];
+					$required_sections[ $section_number ]['fields'] = array();
+				}
+				$required_sections[ $section_number ]['fields'][] = $target['field'];
+			}
+			$required_context['sections'] = array_values( $required_sections );
+			unset( $required_context['selection'], $required_context['visual_selection'] );
+			$required_message = $message . "\n\nVERPLICHTE VOLLEDIGHEIDSCONTROLE: ieder veld in required_targets bevat nog placeholdertekst die onder de opdracht valt. Geef voor IEDER veld een concrete, inhoudelijk passende nieuwe waarde terug. Gebruik exact section en field_path, neem geen ongewijzigde waarden op en bundel alle resultaten in changes_json.";
+			$result = PKCA_OpenAI::interpret( $required_message, $required_context, $history );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $result;
+				continue;
+			}
+			foreach ( $this->response_changes( $result ) as $candidate ) {
+				if ( ! is_array( $candidate ) || empty( $candidate['section'] ) || empty( $candidate['field_path'] ) ) {
+					continue;
+				}
+				$key = (int) $candidate['section'] . ':' . implode( '.', (array) $candidate['field_path'] );
+				$all_changes[ $key ] = $candidate;
 			}
 		}
 
@@ -364,6 +382,64 @@ final class PKCA_REST {
 			'replacement'  => $changes[0]['replacement'] ?? null,
 			'chunk_errors' => count( $errors ),
 		);
+	}
+
+	private function response_changes( array $result ): array {
+		$changes = json_decode( (string) ( $result['changes_json'] ?? '' ), true );
+		if ( ! is_array( $changes ) ) {
+			$changes = array();
+		}
+		if ( 'change' !== ( $result['action'] ?? '' ) || ! isset( $result['section'], $result['field_path'] ) ) {
+			return $changes;
+		}
+		$single = array_intersect_key(
+			$result,
+			array_flip( array( 'section', 'field_path', 'field_name', 'field_type', 'value', 'value_json', 'operation', 'search', 'replacement' ) )
+		);
+		$single_key = (int) ( $single['section'] ?? 0 ) . ':' . implode( '.', (array) ( $single['field_path'] ?? array() ) );
+		foreach ( $changes as $candidate ) {
+			$candidate_key = (int) ( $candidate['section'] ?? 0 ) . ':' . implode( '.', (array) ( $candidate['field_path'] ?? array() ) );
+			if ( $candidate_key === $single_key ) {
+				return $changes;
+			}
+		}
+		$changes[] = $single;
+		return $changes;
+	}
+
+	private function uncovered_placeholder_fields( array $context, array $changes ): array {
+		$targets = array();
+		foreach ( (array) ( $context['sections'] ?? array() ) as $section ) {
+			foreach ( (array) ( $section['fields'] ?? array() ) as $field ) {
+				if ( 'text' !== ( $field['type'] ?? '' ) || false === ( $field['editable'] ?? true ) ) {
+					continue;
+				}
+				$value = html_entity_decode( wp_strip_all_tags( (string) ( $field['value'] ?? '' ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+				if ( ! preg_match( '/\b(?:lorem\s+ipsum|dolor\s+sit\s+amet|placeholder(?:tekst)?)\b/iu', $value ) ) {
+					continue;
+				}
+				$covered = false;
+				$field_path = array_map( 'strval', (array) ( $field['path'] ?? array() ) );
+				foreach ( $changes as $change ) {
+					if ( (int) ( $change['section'] ?? 0 ) !== (int) ( $section['number'] ?? 0 ) ) {
+						continue;
+					}
+					$change_path = array_map( 'strval', (array) ( $change['field_path'] ?? array() ) );
+					$exact = $change_path === $field_path;
+					$parent_repeater = 'repeater' === ( $change['field_type'] ?? '' )
+						&& count( $change_path ) < count( $field_path )
+						&& $change_path === array_slice( $field_path, 0, count( $change_path ) );
+					if ( $exact || $parent_repeater ) {
+						$covered = true;
+						break;
+					}
+				}
+				if ( ! $covered ) {
+					$targets[] = array( 'section' => (int) $section['number'], 'section_data' => $section, 'field' => $field );
+				}
+			}
+		}
+		return $targets;
 	}
 
 	private function is_page_wide_request( string $message ): bool {
