@@ -10,7 +10,7 @@
   const historyKey = `pkca-history-${config.version || 'current'}-${config.postId}`;
   const positionKey = `pkca-position-${config.postId}`;
   const sizeKey = `pkca-size-${config.postId}`;
-  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, previewTargets: new Map() };
+  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, layoutNeedsRefresh: false, previewTargets: new Map() };
   const root = document.createElement('div');
   root.className = 'pkca';
   root.innerHTML = `
@@ -313,6 +313,7 @@
       button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
+		state.layoutNeedsRefresh = false;
 		openLayoutEditor(entry.contextIndex);
       });
       root.append(button);
@@ -508,7 +509,7 @@
       if (input.type === 'checkbox') input.closest('.pkca__layout-toggle')?.querySelector('span')?.replaceChildren(input.checked ? 'Ingeschakeld' : 'Uitgeschakeld');
       applyConditionalLogic();
     });
-    layoutEditor.querySelectorAll('[data-gallery-remove]').forEach(button => button.addEventListener('click', () => updateGallery(button, layout, layoutFields[Number(button.dataset.fieldIndex)])));
+    initGalleryControls(layout, layoutFields);
     layoutEditor.addEventListener('click', event => {
       const button = event.target.closest('[data-repeater-action]');
       if (button) updateRepeater(button, layoutFields[Number(button.dataset.fieldIndex)]);
@@ -551,7 +552,7 @@
     }
     if (field.type === 'gallery') {
       const galleryImages = pending?.new_images || field.images || [];
-      return `<div class="pkca__layout-field pkca__layout-field--gallery" ${meta}><span>${escapeHtml(label)}</span>${help}<div class="pkca__layout-gallery">${galleryImages.map(image => `<figure><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.title || '')}"><button type="button" data-gallery-remove="${image.id}" data-field-index="${index}" aria-label="Afbeelding verwijderen">×</button></figure>`).join('')}</div><div class="pkca__media-actions"><label><input type="file" accept="image/*" multiple data-field-index="${index}"><em>Uploaden</em></label><button type="button" data-media-field="${index}">Mediabibliotheek</button></div></div>`;
+      return `<div class="pkca__layout-field pkca__layout-field--gallery" data-gallery-field="${index}" ${meta}><span>${escapeHtml(label)}</span>${help}<div class="pkca__layout-gallery">${galleryImages.map(image => `<figure draggable="true" data-gallery-id="${image.id}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.title || '')}"><button type="button" data-gallery-remove="${image.id}" data-field-index="${index}" aria-label="Afbeelding verwijderen">×</button></figure>`).join('')}${galleryImages.length ? '' : '<span class="pkca__layout-image-empty">Nog geen afbeeldingen gekozen</span>'}</div><small class="pkca__gallery-help">Sleep afbeeldingen om de volgorde te wijzigen.</small><div class="pkca__media-actions"><label><input type="file" accept="image/*" multiple data-field-index="${index}"><em>Uploaden</em></label><button type="button" data-media-field="${index}">Mediabibliotheek</button></div></div>`;
     }
     if (field.type === 'repeater') {
       const rows = pending?.new_value || field.value || [];
@@ -698,7 +699,7 @@
       }
       const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
       const currentIds = field.type === 'gallery' ? (pending?.new_value || field.value || []).map(Number) : [];
-      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value: field.type === 'gallery' ? [...currentIds, ...uploadedIds] : uploadedIds[0] }], `${uploadedIds.length} afbeelding${uploadedIds.length === 1 ? '' : 'en'} in layout ${layout.number} aangepast.`);
+      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value: field.type === 'gallery' ? [...currentIds, ...uploadedIds] : uploadedIds[0] }], `${uploadedIds.length} afbeelding${uploadedIds.length === 1 ? '' : 'en'} in layout ${layout.number} aangepast.`, { keepEditor: field.type === 'gallery' });
     } catch (error) {
       addMessage(error.message, 'error');
       input.disabled = false;
@@ -709,7 +710,46 @@
     const removeId = Number(button.dataset.galleryRemove);
     const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
     const ids = (pending?.new_value || field.value || []).map(Number).filter(id => id !== removeId);
-    await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: 'gallery', value: ids }], `Afbeelding uit galerij in layout ${layout.number} verwijderd.`);
+    await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: 'gallery', value: ids }], `Afbeelding uit galerij in layout ${layout.number} verwijderd.`, { keepEditor: true });
+  }
+
+  function initGalleryControls(layout, fields, scope = layoutEditor) {
+    scope.querySelectorAll('[data-gallery-remove]').forEach(button => button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      updateGallery(button, layout, fields[Number(button.dataset.fieldIndex)]);
+    }));
+    const galleryFields = scope.matches?.('[data-gallery-field]') ? [scope] : Array.from(scope.querySelectorAll('[data-gallery-field]'));
+    galleryFields.forEach(galleryField => {
+      const fieldIndex = Number(galleryField.dataset.galleryField);
+      const field = fields[fieldIndex];
+      const gallery = galleryField.querySelector('.pkca__layout-gallery');
+      let dragged = null;
+      gallery?.querySelectorAll('figure[data-gallery-id]').forEach(figure => {
+        figure.addEventListener('dragstart', event => {
+          dragged = figure;
+          figure.classList.add('pkca__gallery-dragging');
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', figure.dataset.galleryId || '');
+        });
+        figure.addEventListener('dragover', event => {
+          if (!dragged || dragged === figure) return;
+          event.preventDefault();
+          const rect = figure.getBoundingClientRect();
+          gallery.insertBefore(dragged, event.clientX > rect.left + rect.width / 2 ? figure.nextSibling : figure);
+        });
+        figure.addEventListener('drop', async event => {
+          if (!dragged || !field) return;
+          event.preventDefault();
+          const ids = Array.from(gallery.querySelectorAll('figure[data-gallery-id]')).map(item => Number(item.dataset.galleryId)).filter(Boolean);
+          await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: 'gallery', value: ids }], `Volgorde van galerij in layout ${layout.number} aangepast.`, { keepEditor: true });
+        });
+        figure.addEventListener('dragend', () => {
+          figure.classList.remove('pkca__gallery-dragging');
+          dragged = null;
+        });
+      });
+    });
   }
 
   function updateRepeater(button, field) {
@@ -792,13 +832,21 @@
     }
     const gallery = field.type === 'gallery';
     const frame = wp.media({ title: gallery ? 'Afbeeldingen kiezen' : 'Afbeelding kiezen', library: { type: 'image' }, multiple: gallery, button: { text: 'Gebruiken' } });
+    frame.on('open', () => root.classList.add('pkca--media-open'));
+    frame.on('close', () => root.classList.remove('pkca--media-open'));
+    const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
+    const current = gallery ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
+    if (gallery && current.length) {
+      frame.on('open', () => {
+        const selection = frame.state().get('selection');
+        current.forEach(id => selection.add(wp.media.attachment(id)));
+      });
+    }
     frame.on('select', async () => {
       const selected = frame.state().get('selection').toJSON();
-      const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
-      const current = gallery ? (pending?.new_value || field.value || []).map(Number) : [];
-      const value = gallery ? [...new Set([...current, ...selected.map(item => Number(item.id))])] : Number(selected[0]?.id || 0);
+      const value = gallery ? [...new Set(selected.map(item => Number(item.id)).filter(Boolean))] : Number(selected[0]?.id || 0);
       if (!value || (Array.isArray(value) && !value.length)) return;
-      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], gallery ? 'Galerij aangepast.' : 'Afbeelding aangepast.');
+      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], gallery ? 'Galerij aangepast.' : 'Afbeelding aangepast.', { keepEditor: gallery });
     });
     frame.open();
   }
@@ -825,7 +873,7 @@
     });
   }
 
-  async function queueLayoutChanges(edits, confirmation) {
+  async function queueLayoutChanges(edits, confirmation, { keepEditor = false } = {}) {
     setBusy(true);
     try {
       const data = await request('change', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ post_id: config.postId, changes: edits }) });
@@ -834,8 +882,14 @@
       applyPreview(state.context.changes);
       renderChanges(state.context.changes);
       addMessage(data.queued === 0 && data.unchanged > 0 ? 'Deze wijziging stond al klaar; de pagina-preview is opnieuw gesynchroniseerd.' : confirmation, 'agent');
-      closeLayoutEditor();
-      if (edits.some(edit => edit.refresh || !['text', 'link', 'image'].includes(edit.type))) {
+      const requiresRefresh = state.layoutNeedsRefresh || edits.some(edit => edit.refresh || !['text', 'link', 'image'].includes(edit.type));
+      if (keepEditor) {
+        state.layoutNeedsRefresh ||= requiresRefresh;
+        refreshOpenLayoutEditor(confirmation, edits);
+      } else {
+        closeLayoutEditor(false);
+      }
+      if (requiresRefresh && !keepEditor) {
         sessionStorage.setItem('pkca-preview-resume', String(config.postId));
         window.location.reload();
       }
@@ -852,6 +906,26 @@
     }
   }
 
+  function refreshOpenLayoutEditor(message = '', edits = []) {
+    const index = state.activeLayout;
+    if (index === null) return;
+    const layout = state.context?.sections?.[index];
+    const layoutFields = layout?.fields || [];
+    edits.filter(edit => edit.type === 'gallery').forEach(edit => {
+      const fieldIndex = layoutFields.findIndex(field => (field.path || []).join('.') === (edit.field_path || []).join('.'));
+      const current = layoutEditor.querySelector(`[data-gallery-field="${fieldIndex}"]`);
+      if (fieldIndex < 0 || !current) return;
+      const template = document.createElement('template');
+      template.innerHTML = layoutField(layoutFields[fieldIndex], fieldIndex, layout.number);
+      const replacement = template.content.firstElementChild;
+      current.replaceWith(replacement);
+      replacement.querySelectorAll('input[type=file]').forEach(input => input.addEventListener('change', () => uploadLayoutImage(input, layout, layoutFields[Number(input.dataset.fieldIndex)])));
+      replacement.querySelectorAll('[data-media-field]').forEach(button => button.addEventListener('click', () => chooseFromMedia(button, layout, layoutFields[Number(button.dataset.mediaField)])));
+      initGalleryControls(layout, layoutFields, replacement);
+    });
+    setLayoutStatus(`${message} Je kunt de galerij verder aanpassen.`, 'info');
+  }
+
   function setLayoutStatus(message, kind = 'info') {
     const status = layoutEditor.querySelector('.pkca__layout-status');
     if (!status) return;
@@ -860,12 +934,18 @@
     status.textContent = message || '';
   }
 
-  function closeLayoutEditor() {
+  function closeLayoutEditor(reloadDeferred = true) {
+    const needsRefresh = state.layoutNeedsRefresh;
     state.activeLayout = null;
+    state.layoutNeedsRefresh = false;
     layoutEditor.hidden = true;
     layoutEditor.innerHTML = '';
     messages.hidden = false;
     form.hidden = false;
+    if (needsRefresh && reloadDeferred) {
+      sessionStorage.setItem('pkca-preview-resume', String(config.postId));
+      window.location.reload();
+    }
   }
 
   function humanize(value) {
@@ -1382,6 +1462,9 @@
   function setBusy(busy) {
     form.querySelector('.pkca__send').disabled = busy;
     textarea.disabled = busy;
+    layoutEditor.querySelectorAll('[data-gallery-remove],[data-media-field],.pkca__layout-field--gallery input[type=file]').forEach(control => {
+      control.disabled = busy;
+    });
   }
 
   function escapeHtml(value) {
