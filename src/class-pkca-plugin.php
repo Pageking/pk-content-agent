@@ -21,15 +21,28 @@ final class PKCA_Plugin {
 		add_filter( 'acf/load_value/name=content_repeater', array( $this, 'apply_raw_preview' ), 100, 3 );
 		add_filter( 'acf/format_value/name=content_repeater', array( $this, 'apply_preview' ), 100, 3 );
 		add_filter( 'acf/load_value', array( $this, 'apply_sub_field_preview' ), 100, 3 );
+		add_filter( 'acf/format_value', array( $this, 'apply_archive_preview' ), 100, 3 );
 	}
 
 	public function enqueue_frontend(): void {
-		if ( is_admin() || ! is_singular() || ! is_user_logged_in() ) {
+		if ( is_admin() || ! is_user_logged_in() ) {
 			return;
 		}
-
-		$post_id = (int) get_queried_object_id();
-		if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+		if ( is_singular() ) {
+			$post_id = (int) get_queried_object_id();
+			if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+				return;
+			}
+			$target = (string) $post_id;
+			$title = get_the_title( $post_id );
+		} elseif ( is_post_type_archive() ) {
+			$post_type = get_queried_object();
+			if ( ! $post_type instanceof WP_Post_Type || ! current_user_can( 'edit_posts' ) ) {
+				return;
+			}
+			$target = 'archive:' . $post_type->name;
+			$title = $post_type->labels->name;
+		} else {
 			return;
 		}
 
@@ -44,8 +57,8 @@ final class PKCA_Plugin {
 					// expose WordPress through a different frontend/proxy port.
 					'restUrl' => esc_url_raw( wp_make_link_relative( rest_url( 'pk-content-agent/v1/' ) ) ),
 					'nonce'   => wp_create_nonce( 'wp_rest' ),
-					'postId'  => $post_id,
-					'title'   => get_the_title( $post_id ),
+					'postId'  => $target,
+					'title'   => $title,
 					'version' => PKCA_VERSION,
 				)
 			) . ';',
@@ -75,10 +88,47 @@ final class PKCA_Plugin {
 	}
 
 	public function apply_sub_field_preview( mixed $value, mixed $post_id, array $field ): mixed {
-		if ( is_admin() || ! is_user_logged_in() || ! is_numeric( $post_id ) || (int) $post_id < 1 || 'content_repeater' === ( $field['name'] ?? '' ) ) {
+		if ( is_admin() || ! is_user_logged_in() ) {
 			return $value;
 		}
-		return PKCA_Content::preview_sub_field_value( $value, (int) $post_id, $field );
+		if ( is_numeric( $post_id ) && (int) $post_id > 0 ) {
+			return 'content_repeater' === ( $field['name'] ?? '' ) ? $value : PKCA_Content::preview_sub_field_value( $value, (int) $post_id, $field );
+		}
+		$target = $this->current_archive_target();
+		if ( ! $target ) {
+			return $value;
+		}
+		$definition = PKCA_Content::target( $target );
+		if ( is_wp_error( $definition ) ) {
+			return $value;
+		}
+		return $definition['field'] === ( $field['name'] ?? '' )
+			? PKCA_Content::apply_changes_to_raw_value( $value, $target )
+			: PKCA_Content::preview_sub_field_value( $value, $target, $field );
+	}
+
+	public function apply_archive_preview( mixed $value, mixed $post_id, array $field ): mixed {
+		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! is_user_logged_in() || ! is_array( $value ) ) {
+			return $value;
+		}
+		$target = $this->current_archive_target();
+		$definition = $target ? PKCA_Content::target( $target ) : null;
+		if ( ! is_array( $definition ) || $definition['field'] !== ( $field['name'] ?? '' ) ) {
+			return $value;
+		}
+		$inspection = PKCA_Content::inspect( $target );
+		foreach ( is_wp_error( $inspection ) ? array() : $inspection['changes'] as $change ) {
+			$value = PKCA_Content::apply_change_to_value( $value, $change );
+		}
+		return $value;
+	}
+
+	private function current_archive_target(): string {
+		if ( ! is_post_type_archive() ) {
+			return '';
+		}
+		$post_type = get_queried_object();
+		return $post_type instanceof WP_Post_Type ? 'archive:' . $post_type->name : '';
 	}
 
 	public function register_settings(): void {
@@ -152,7 +202,7 @@ final class PKCA_Plugin {
 		?>
 		<div class="wrap">
 			<h1>PK Content Agent</h1>
-			<p>De chat verschijnt op singular frontendpagina’s voor gebruikers die de betreffende pagina mogen bewerken.</p>
+			<p>De chat verschijnt op bewerkbare frontendpagina’s en post-typearchieven met een bijbehorende ACF-optionspagina.</p>
 			<form action="options.php" method="post">
 				<?php settings_fields( 'pkca_settings' ); ?>
 				<table class="form-table" role="presentation">

@@ -18,7 +18,7 @@ final class PKCA_REST {
 	}
 
 	public function change( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$post_id = absint( $request['post_id'] );
+		$post_id = $this->request_target( $request );
 		$items = $request->get_param( 'changes' );
 		if ( ! is_array( $items ) || array() === $items ) {
 			return new WP_Error( 'pkca_changes_missing', 'Er zijn geen velden gewijzigd.', array( 'status' => 400 ) );
@@ -58,19 +58,21 @@ final class PKCA_REST {
 	}
 
 	public function can_edit( WP_REST_Request $request ): bool|WP_Error {
-		$post_id = absint( $request->get_param( 'post_id' ) );
-		return $post_id && current_user_can( 'edit_post', $post_id )
+		$post_id = $this->request_target( $request );
+		$target = PKCA_Content::target( $post_id );
+		$allowed = ! is_wp_error( $target ) && ( 'archive' === $target['type'] ? current_user_can( 'edit_posts' ) : current_user_can( 'edit_post', (int) $target['acf_id'] ) );
+		return $allowed
 			? true
 			: new WP_Error( 'pkca_forbidden', 'Je mag deze pagina niet bewerken.', array( 'status' => 403 ) );
 	}
 
 	public function context( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$result = PKCA_Content::inspect( absint( $request['post_id'] ) );
+		$result = PKCA_Content::inspect( $this->request_target( $request ) );
 		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 
 	public function chat( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$post_id = absint( $request['post_id'] );
+		$post_id = $this->request_target( $request );
 		$message = sanitize_textarea_field( (string) $request['message'] );
 		$original_message = sanitize_textarea_field( (string) ( $request->get_param( 'original_message' ) ?: $message ) );
 		if ( '' === $message ) {
@@ -742,7 +744,8 @@ final class PKCA_REST {
 		require_once ABSPATH . 'wp-admin/includes/file.php';
 		require_once ABSPATH . 'wp-admin/includes/media.php';
 		require_once ABSPATH . 'wp-admin/includes/image.php';
-		$id = media_handle_upload( 'file', absint( $request['post_id'] ) );
+		$target = PKCA_Content::target( $this->request_target( $request ) );
+		$id = media_handle_upload( 'file', is_array( $target ) && 'post' === $target['type'] ? (int) $target['acf_id'] : 0 );
 		if ( is_wp_error( $id ) ) {
 			return $id;
 		}
@@ -754,12 +757,12 @@ final class PKCA_REST {
 	}
 
 	public function publish( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$result = PKCA_Content::publish( absint( $request['post_id'] ) );
+		$result = PKCA_Content::publish( $this->request_target( $request ) );
 		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 
 	public function discard( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$post_id = absint( $request['post_id'] );
+		$post_id = $this->request_target( $request );
 		$change_id = sanitize_text_field( (string) $request->get_param( 'change_id' ) );
 		if ( '' !== $change_id ) {
 			if ( ! PKCA_Content::discard_change( $post_id, $change_id ) ) {
@@ -770,5 +773,10 @@ final class PKCA_REST {
 		}
 		PKCA_Content::discard( $post_id );
 		return rest_ensure_response( array( 'discarded' => true, 'changes' => array() ) );
+	}
+
+	private function request_target( WP_REST_Request $request ): int|string {
+		$value = (string) $request->get_param( 'post_id' );
+		return ctype_digit( $value ) ? absint( $value ) : sanitize_text_field( $value );
 	}
 }

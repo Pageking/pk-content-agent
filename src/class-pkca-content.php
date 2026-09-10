@@ -10,13 +10,17 @@ final class PKCA_Content {
 		return self::$suppress_preview;
 	}
 
-	public static function inspect( int $post_id ): array|WP_Error {
+	public static function inspect( int|string $post_id ): array|WP_Error {
 		if ( ! function_exists( 'get_field' ) ) {
 			return new WP_Error( 'pkca_acf_missing', 'ACF is niet actief.', array( 'status' => 500 ) );
 		}
 
+		$target = self::target( $post_id );
+		if ( is_wp_error( $target ) ) {
+			return $target;
+		}
 		self::$suppress_preview = true;
-		$rows = get_field( 'content_repeater', $post_id );
+		$rows = get_field( $target['field'], $target['acf_id'] );
 		self::$suppress_preview = false;
 		if ( ! is_array( $rows ) ) {
 			$rows = array();
@@ -43,11 +47,11 @@ final class PKCA_Content {
 
 		return array(
 			'post'     => array(
-				'id'        => $post_id,
-				'title'     => get_the_title( $post_id ),
-				'post_type' => get_post_type( $post_id ),
-				'url'       => get_permalink( $post_id ),
-				'modified'  => get_post_modified_time( 'c', true, $post_id ),
+				'id'        => $target['key'],
+				'title'     => $target['title'],
+				'post_type' => $target['post_type'],
+				'url'       => $target['url'],
+				'modified'  => self::target_version( $target, $rows ),
 			),
 			'sections' => $sections,
 			'link_targets' => self::link_targets(),
@@ -182,8 +186,12 @@ final class PKCA_Content {
 		return array_values( array_unique( $nested_roots ) );
 	}
 
-	private static function layout_schemas( int $post_id ): array {
-		$root = get_field_object( 'content_repeater', $post_id, false, false );
+	private static function layout_schemas( int|string $post_id ): array {
+		$target = self::target( $post_id );
+		if ( is_wp_error( $target ) ) {
+			return array();
+		}
+		$root = get_field_object( $target['field'], $target['acf_id'], false, false );
 		$schemas = array();
 		foreach ( (array) ( $root['sub_fields'] ?? array() ) as $sub_field ) {
 			if ( 'flex_content' !== ( $sub_field['name'] ?? '' ) ) {
@@ -290,7 +298,7 @@ final class PKCA_Content {
 		return $row;
 	}
 
-	public static function apply_changes_to_raw_value( mixed $value, int $post_id ): mixed {
+	public static function apply_changes_to_raw_value( mixed $value, int|string $post_id ): mixed {
 		if ( self::$suppress_preview || ! is_array( $value ) ) {
 			return $value;
 		}
@@ -298,7 +306,11 @@ final class PKCA_Content {
 		if ( ! $changes ) {
 			return $value;
 		}
-		$root = get_field_object( 'content_repeater', $post_id, false, false );
+		$target = self::target( $post_id );
+		if ( is_wp_error( $target ) ) {
+			return $value;
+		}
+		$root = get_field_object( $target['field'], $target['acf_id'], false, false );
 		$flex_key = '';
 		foreach ( (array) ( $root['sub_fields'] ?? array() ) as $field ) {
 			if ( 'flex_content' === ( $field['name'] ?? '' ) ) {
@@ -333,7 +345,7 @@ final class PKCA_Content {
 		return $value;
 	}
 
-	public static function preview_sub_field_value( mixed $value, int $post_id, array $acf_field ): mixed {
+	public static function preview_sub_field_value( mixed $value, int|string $post_id, array $acf_field ): mixed {
 		if ( self::$suppress_preview || empty( $acf_field['key'] ) ) {
 			return $value;
 		}
@@ -567,7 +579,7 @@ final class PKCA_Content {
 		return is_scalar( $value ) || null === $value ? (string) $value : '';
 	}
 
-	public static function add_change( int $post_id, array $change ): array|WP_Error {
+	public static function add_change( int|string $post_id, array $change ): array|WP_Error {
 		$inspection = self::inspect( $post_id );
 		if ( is_wp_error( $inspection ) ) {
 			return $inspection;
@@ -762,7 +774,7 @@ final class PKCA_Content {
 		}
 	}
 
-	public static function publish( int $post_id ): array|WP_Error {
+	public static function publish( int|string $post_id ): array|WP_Error {
 		$inspection = self::inspect( $post_id );
 		if ( is_wp_error( $inspection ) ) {
 			return $inspection;
@@ -772,7 +784,14 @@ final class PKCA_Content {
 			return new WP_Error( 'pkca_no_changes', 'Er zijn geen wijzigingen om te publiceren.', array( 'status' => 400 ) );
 		}
 
-		$current_modified = (string) get_post_modified_time( 'c', true, $post_id );
+		$target = self::target( $post_id );
+		if ( is_wp_error( $target ) ) {
+			return $target;
+		}
+		self::$suppress_preview = true;
+		$current_rows = get_field( $target['field'], $target['acf_id'] );
+		self::$suppress_preview = false;
+		$current_modified = self::target_version( $target, is_array( $current_rows ) ? $current_rows : array() );
 		$base_modified    = (string) ( $changes[0]['base_modified'] ?? '' );
 		if ( $base_modified && $base_modified !== $current_modified ) {
 			return new WP_Error(
@@ -782,10 +801,12 @@ final class PKCA_Content {
 			);
 		}
 
-		wp_save_post_revision( $post_id );
+		if ( 'post' === $target['type'] ) {
+			wp_save_post_revision( (int) $target['acf_id'] );
+		}
 
 		self::$suppress_preview = true;
-		$rows = get_field( 'content_repeater', $post_id );
+		$rows = get_field( $target['field'], $target['acf_id'] );
 		self::$suppress_preview = false;
 		if ( ! is_array( $rows ) ) {
 			return new WP_Error( 'pkca_publish_failed', 'De ACF-content kon niet worden gelezen.', array( 'status' => 500 ) );
@@ -796,22 +817,24 @@ final class PKCA_Content {
 			$rows = self::apply_change_to_value( $rows, $change, false );
 		}
 
-		update_field( 'content_repeater', $rows, $post_id );
+		update_field( $target['field'], $rows, $target['acf_id'] );
 		if ( function_exists( 'acf_flush_value_cache' ) ) {
-			acf_flush_value_cache( $post_id, 'content_repeater' );
+			acf_flush_value_cache( $target['acf_id'], $target['field'] );
 		}
 		self::$suppress_preview = true;
-		$stored_rows = get_field( 'content_repeater', $post_id );
+		$stored_rows = get_field( $target['field'], $target['acf_id'] );
 		self::$suppress_preview = false;
 
 		if ( ! is_array( $stored_rows ) || ! self::changes_are_stored( $stored_rows, $changes ) ) {
-			update_field( 'content_repeater', $original_rows, $post_id );
+			update_field( $target['field'], $original_rows, $target['acf_id'] );
 			return new WP_Error( 'pkca_publish_failed', 'De wijzigingen konden niet in ACF worden opgeslagen.', array( 'status' => 500 ) );
 		}
 
-		wp_update_post( array( 'ID' => $post_id ) );
+		if ( 'post' === $target['type'] ) {
+			wp_update_post( array( 'ID' => (int) $target['acf_id'] ) );
+		}
 		delete_transient( self::transient_key( $post_id ) );
-		return array( 'published' => count( $changes ), 'url' => get_permalink( $post_id ) );
+		return array( 'published' => count( $changes ), 'url' => $target['url'] );
 	}
 
 	/**
@@ -955,11 +978,11 @@ final class PKCA_Content {
 		return $value;
 	}
 
-	public static function discard( int $post_id ): void {
+	public static function discard( int|string $post_id ): void {
 		delete_transient( self::transient_key( $post_id ) );
 	}
 
-	public static function discard_change( int $post_id, string $change_id ): bool {
+	public static function discard_change( int|string $post_id, string $change_id ): bool {
 		$changes = self::get_changes( $post_id );
 		$remaining = array_values(
 			array_filter(
@@ -978,16 +1001,35 @@ final class PKCA_Content {
 		return true;
 	}
 
-	public static function get_changes( int $post_id ): array {
+	public static function get_changes( int|string $post_id ): array {
 		$value = get_transient( self::transient_key( $post_id ) );
 		return is_array( $value ) ? $value : array();
 	}
 
-	private static function save_changes( int $post_id, array $changes ): void {
+	private static function save_changes( int|string $post_id, array $changes ): void {
 		set_transient( self::transient_key( $post_id ), $changes, 2 * HOUR_IN_SECONDS );
 	}
 
-	private static function transient_key( int $post_id ): string {
-		return self::TRANSIENT_PREFIX . get_current_blog_id() . '_' . get_current_user_id() . '_' . $post_id;
+	private static function transient_key( int|string $post_id ): string {
+		$suffix = is_numeric( $post_id ) ? (string) (int) $post_id : md5( (string) $post_id );
+		return self::TRANSIENT_PREFIX . get_current_blog_id() . '_' . get_current_user_id() . '_' . $suffix;
+	}
+
+	public static function target( int|string $target ): array|WP_Error {
+		if ( is_numeric( $target ) && (int) $target > 0 ) {
+			$post_id = (int) $target;
+			return array( 'type' => 'post', 'key' => (string) $post_id, 'acf_id' => $post_id, 'field' => 'content_repeater', 'title' => get_the_title( $post_id ), 'post_type' => (string) get_post_type( $post_id ), 'url' => get_permalink( $post_id ) );
+		}
+		if ( preg_match( '/^archive:([a-z0-9_-]+)$/', (string) $target, $matches ) ) {
+			$post_type = get_post_type_object( $matches[1] );
+			if ( $post_type && $post_type->public && $post_type->has_archive ) {
+				return array( 'type' => 'archive', 'key' => 'archive:' . $post_type->name, 'acf_id' => 'option', 'field' => $post_type->name . '_content_repeater', 'title' => $post_type->labels->name, 'post_type' => $post_type->name, 'url' => get_post_type_archive_link( $post_type->name ) ?: home_url( '/' ) );
+			}
+		}
+		return new WP_Error( 'pkca_target_invalid', 'Deze contentbron wordt niet ondersteund.', array( 'status' => 400 ) );
+	}
+
+	private static function target_version( array $target, array $rows ): string {
+		return 'post' === $target['type'] ? (string) get_post_modified_time( 'c', true, (int) $target['acf_id'] ) : hash( 'sha256', wp_json_encode( $rows ) ?: '' );
 	}
 }
