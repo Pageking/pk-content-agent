@@ -690,7 +690,11 @@ final class PKCA_REST {
 					if ( 'image' === $selection['type'] ) {
 						return $this->image_key( (string) ( $field['url'] ?? '' ) ) === $this->image_key( $selection['value'] );
 					}
-					return $this->normalize_selection_text( (string) ( $field['value'] ?? '' ) ) === $selected_value;
+					$current = $this->normalize_selection_text( (string) ( $field['value'] ?? '' ) );
+					$original = array_key_exists( 'original_value', $field )
+						? $this->normalize_selection_text( (string) $field['original_value'] )
+						: '';
+					return $current === $selected_value || ( '' !== $original && $original === $selected_value );
 				}
 			)
 		);

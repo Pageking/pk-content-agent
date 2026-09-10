@@ -138,7 +138,13 @@
         if (isImage) {
           return field.type === 'image' && imageKeyFromUrl(field.url || '') === imageKeyFromUrl(selectedValue);
         }
-        return field.type === 'text' && normalizeText(stripHtml(String(field.value ?? ''))) === selectedValue;
+        if (field.type !== 'text') return false;
+        // The DOM can still contain the stored label while this field already has
+        // a pending preview value. Match both versions so clicking that exact
+        // button never degrades to a layout-wide, model-guessed selection.
+        return [field.value, field.original_value]
+          .filter(value => value !== undefined && value !== null)
+          .some(value => normalizeText(stripHtml(String(value))) === selectedValue);
       });
       let matchedField = fieldMatches.length === 1 ? fieldMatches[0] : null;
       if (!matchedField && fieldMatches.length > 1 && !isImage) {
