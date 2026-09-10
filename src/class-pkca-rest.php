@@ -24,6 +24,7 @@ final class PKCA_REST {
 			return new WP_Error( 'pkca_changes_missing', 'Er zijn geen velden gewijzigd.', array( 'status' => 400 ) );
 		}
 		$queued = array();
+		$unchanged = 0;
 		foreach ( array_slice( $items, 0, 50 ) as $item ) {
 			if ( ! is_array( $item ) ) {
 				continue;
@@ -44,12 +45,16 @@ final class PKCA_REST {
 				)
 			);
 			if ( is_wp_error( $result ) ) {
+				if ( 'pkca_no_change' === $result->get_error_code() ) {
+					$unchanged++;
+					continue;
+				}
 				return $result;
 			}
 			$queued[] = $result;
 		}
 		$context = PKCA_Content::inspect( $post_id );
-		return is_wp_error( $context ) ? $context : rest_ensure_response( array( 'queued' => count( $queued ), 'changes' => $context['changes'] ) );
+		return is_wp_error( $context ) ? $context : rest_ensure_response( array( 'queued' => count( $queued ), 'unchanged' => $unchanged, 'changes' => $context['changes'] ) );
 	}
 
 	public function can_edit( WP_REST_Request $request ): bool|WP_Error {

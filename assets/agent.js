@@ -663,7 +663,7 @@
       syncContextWithChanges(state.context.changes);
       applyPreview(state.context.changes);
       renderChanges(state.context.changes);
-      addMessage(confirmation, 'agent');
+      addMessage(data.queued === 0 && data.unchanged > 0 ? 'Deze wijziging stond al klaar; de pagina-preview is opnieuw gesynchroniseerd.' : confirmation, 'agent');
       closeLayoutEditor();
       if (edits.some(edit => edit.refresh || !['text', 'link', 'image'].includes(edit.type))) {
         sessionStorage.setItem('pkca-preview-resume', String(config.postId));
