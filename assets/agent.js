@@ -769,7 +769,8 @@
         changedElement = previewButtonOption(section, item);
       } else if (item.type === 'text') {
         const oldText = normalizeText(stripHtml(String(item.old_value ?? '')));
-        const newText = stripHtml(String(item.new_value ?? ''));
+        const newHtml = String(item.new_value ?? '');
+        const newText = stripHtml(newHtml);
         const existingTarget = state.previewTargets.get(targetKey);
         const selectedElement = state.selectedTarget?.section === Number(item.section)
           && state.selectedTarget?.type === 'text'
@@ -780,7 +781,7 @@
           : null;
         let textNode = existingTarget?.node || null;
         if (selectedElement) {
-          changedElement = updateSelectedElement(selectedElement, oldText, newText) ? selectedElement : null;
+          changedElement = updateSelectedElement(selectedElement, oldText, newText, newHtml) ? selectedElement : null;
           textNode = null;
         }
         // A later instruction for the same field must update the node that was
@@ -793,9 +794,18 @@
           changedElement = textNode.parentElement;
         }
         if (!changedElement && textNode?.nodeType === Node.ELEMENT_NODE) {
-          changedElement = updateSelectedElement(textNode, oldText, newText) ? textNode : null;
+          changedElement = updateSelectedElement(textNode, oldText, newText, newHtml) ? textNode : null;
           textNode = null;
         }
+		if (!changedElement && hasHtmlMarkup(newHtml)) {
+		  const richElement = Array.from(section.querySelectorAll('.pk-text, .wysiwyg, .wysiwyg-gaps'))
+		    .find(element => normalizeText(element.textContent) === oldText);
+		  if (richElement) {
+			richElement.innerHTML = newHtml;
+			changedElement = richElement;
+			state.previewTargets.set(targetKey, { type: 'text', node: richElement });
+		  }
+		}
 		// After a server-rendered preview reload the intended element can already
 		// contain the new value. In that case do not replace another occurrence of
 		// the old value (for example the page title inside a breadcrumb).
@@ -884,15 +894,26 @@
     return nodes.length > 0;
   }
 
-  function updateSelectedElement(element, oldText, newText) {
+  function updateSelectedElement(element, oldText, newText, newHtml = '') {
     const labels = element.matches('.pk-button-text, .pk-heading-text')
       ? [element]
       : Array.from(element.querySelectorAll('.pk-button-text, .pk-heading-text'));
     if (labels.length) {
-      labels.forEach(label => { label.textContent = newText; });
+      labels.forEach(label => {
+        if (hasHtmlMarkup(newHtml)) label.innerHTML = newHtml;
+        else label.textContent = newText;
+      });
       return true;
     }
+	if (hasHtmlMarkup(newHtml) && normalizeText(element.textContent) === oldText) {
+	  element.innerHTML = newHtml;
+	  return true;
+	}
     return updateTextNodes(element, oldText, newText);
+  }
+
+  function hasHtmlMarkup(value) {
+    return /<\/?(?:p|br|strong|b|em|i|ul|ol|li|a|h[1-6]|blockquote)\b/i.test(String(value || ''));
   }
 
   function stripHtml(value) {

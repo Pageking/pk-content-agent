@@ -896,8 +896,15 @@ final class PKCA_Content {
 			if ( $normalize( $stored ) === $normalize( $expected ) ) {
 				return true;
 			}
-			$text = static fn( mixed $value ): string => preg_replace( '/\s+/u', ' ', trim( html_entity_decode( wp_strip_all_tags( (string) $value ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
-			return $text( $stored ) === $text( $expected );
+			$markup = static function ( mixed $value ): string {
+				$value = html_entity_decode( (string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+				$value = wpautop( trim( str_replace( array( "\r\n", "\r" ), "\n", $value ) ) );
+				$value = preg_replace( '/>\s+</u', '><', $value );
+				return trim( (string) $value );
+			};
+			// Preserve semantic WYSIWYG differences such as strong, em and lists.
+			// wpautop keeps plain text and ACF's harmless paragraph wrappers equal.
+			return $markup( $stored ) === $markup( $expected );
 		}
 		if ( 'image' === $type ) {
 			$stored_id = is_array( $stored ) ? (int) ( $stored['ID'] ?? $stored['id'] ?? 0 ) : (int) $stored;
