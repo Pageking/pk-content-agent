@@ -387,6 +387,19 @@ final class PKCA_REST {
 				static fn( array $change ): bool => 'text' === ( $change['field_type'] ?? '' )
 			);
 		}
+		if ( $this->is_placeholder_only_request( $message ) ) {
+			$placeholder_keys = array_fill_keys(
+				array_map(
+					static fn( array $target ): string => (int) $target['section'] . ':' . implode( '.', (array) $target['field']['path'] ),
+					$this->uncovered_placeholder_fields( $context, array() )
+				),
+				true
+			);
+			$all_changes = array_filter(
+				$all_changes,
+				static fn( array $change ): bool => isset( $placeholder_keys[ (int) ( $change['section'] ?? 0 ) . ':' . implode( '.', (array) ( $change['field_path'] ?? array() ) ) ] )
+			);
+		}
 
 		if ( array() === $all_changes ) {
 			return array(
@@ -465,6 +478,12 @@ final class PKCA_REST {
 				$all_changes[ $key ] = $candidate;
 			}
 		}
+	}
+
+	private function is_placeholder_only_request( string $message ): bool {
+		$mentions_placeholders = (bool) preg_match( '/\b(?:lorem(?:\s+ipsum)?|placeholderteksten?|dummyteksten?|voorbeeldteksten?)\b/iu', $message );
+		$also_requests_audit = (bool) preg_match( '/\b(?:spelling|spelfout|spelfouten|grammatica|inconsistent|inconsistenties|tone of voice|schrijfstijl|redactionele audit)\b/iu', $message );
+		return $mentions_placeholders && ! $also_requests_audit;
 	}
 
 	private function response_changes( array $result ): array {
