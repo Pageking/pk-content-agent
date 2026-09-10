@@ -833,22 +833,36 @@
     const gallery = field.type === 'gallery';
     const frame = wp.media({ title: gallery ? 'Afbeeldingen toevoegen' : 'Afbeelding kiezen', library: { type: 'image' }, multiple: gallery ? 'add' : false, button: { text: gallery ? 'Toevoegen aan galerij' : 'Gebruiken' } });
     let frameDisposed = false;
+    let mediaModal = null;
+    let mediaBackdrop = null;
+    const disposeMediaFrame = () => {
+      if (frameDisposed) return;
+      frameDisposed = true;
+      root.classList.remove('pkca--media-open');
+      try { frame.close(); } catch (_) {}
+      try { frame.modal?.close(); } catch (_) {}
+      try { frame.modal?.remove(); } catch (_) {}
+      try { frame.remove(); } catch (_) {}
+      // WordPress may leave the modal shell mounted after an upload followed by
+      // "Toevoegen aan galerij". Remove only the elements captured for this
+      // frame, so another media dialog on the page is never affected.
+      mediaModal?.remove();
+      mediaBackdrop?.remove();
+      if (!document.querySelector('.media-modal')) document.body.classList.remove('modal-open');
+    };
     frame.on('open', () => {
       root.classList.add('pkca--media-open');
-      if (gallery) window.requestAnimationFrame(() => frame.content?.mode('browse'));
+      window.requestAnimationFrame(() => {
+        const modals = Array.from(document.querySelectorAll('.media-modal'));
+        const backdrops = Array.from(document.querySelectorAll('.media-modal-backdrop'));
+        mediaModal = frame.modal?.el || modals[modals.length - 1] || null;
+        mediaBackdrop = backdrops[backdrops.length - 1] || null;
+        if (gallery) frame.content?.mode('browse');
+      });
     });
     frame.on('close', () => {
-      // Core keeps a closed media modal mounted and visible in some frontend
-      // contexts. Remove it before restoring the agent's high stacking layer.
-      window.setTimeout(() => {
-        if (!frameDisposed) {
-          frameDisposed = true;
-          frame.modal?.close();
-          frame.modal?.remove();
-          frame.remove();
-        }
-        root.classList.remove('pkca--media-open');
-      }, 0);
+      // Also handle closing through Escape or the modal's close button.
+      window.setTimeout(disposeMediaFrame, 0);
     });
     const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
     const current = gallery ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
@@ -857,7 +871,9 @@
       const selectedIds = selected.map(item => Number(item.id)).filter(Boolean);
       const value = gallery ? [...new Set([...current, ...selectedIds])] : Number(selectedIds[0] || 0);
       if (!value || (Array.isArray(value) && !value.length)) return;
-      frame.modal?.close();
+      // Dispose synchronously. Waiting for WordPress' later `close` event can
+      // leave a large, empty media-modal above the frontend editor after upload.
+      disposeMediaFrame();
       await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], gallery ? 'Galerij aangepast.' : 'Afbeelding aangepast.', { keepEditor: gallery });
     });
     frame.open();
@@ -923,6 +939,9 @@
     if (index === null) return;
     const layout = state.context?.sections?.[index];
     const layoutFields = layout?.fields || [];
+    const fieldsContainer = layoutEditor.querySelector('.pkca__layout-fields');
+    const previousScrollTop = fieldsContainer?.scrollTop || 0;
+    let refreshedGallery = false;
     edits.filter(edit => edit.type === 'gallery').forEach(edit => {
       const fieldIndex = layoutFields.findIndex(field => (field.path || []).join('.') === (edit.field_path || []).join('.'));
       const current = layoutEditor.querySelector(`[data-gallery-field="${fieldIndex}"]`);
@@ -930,11 +949,23 @@
       const template = document.createElement('template');
       template.innerHTML = layoutField(layoutFields[fieldIndex], fieldIndex, layout.number);
       const replacement = template.content.firstElementChild;
+      if (!replacement) return;
       current.replaceWith(replacement);
+      refreshedGallery = true;
       replacement.querySelectorAll('input[type=file]').forEach(input => input.addEventListener('change', () => uploadLayoutImage(input, layout, layoutFields[Number(input.dataset.fieldIndex)])));
       replacement.querySelectorAll('[data-media-field]').forEach(button => button.addEventListener('click', () => chooseFromMedia(button, layout, layoutFields[Number(button.dataset.mediaField)])));
       initGalleryControls(layout, layoutFields, replacement);
     });
+    // If a media-frame race removed or emptied part of the editor, rebuild the
+    // complete layout instead of leaving a white panel with only the save button.
+    const editorIsComplete = layoutEditor.querySelector('.pkca__layout-editor-header')
+      && layoutEditor.querySelector('.pkca__layout-form')
+      && layoutEditor.querySelector('.pkca__layout-fields')?.children.length;
+    if (edits.some(edit => edit.type === 'gallery') && (!refreshedGallery || !editorIsComplete)) {
+      openLayoutEditor(index);
+    }
+    const refreshedFields = layoutEditor.querySelector('.pkca__layout-fields');
+    if (refreshedFields) refreshedFields.scrollTop = Math.max(0, Math.min(previousScrollTop, refreshedFields.scrollHeight - refreshedFields.clientHeight));
     setLayoutStatus(`${message} Je kunt de galerij verder aanpassen.`, 'info');
   }
 
