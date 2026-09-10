@@ -322,6 +322,7 @@
     const layoutFields = layout.fields || [];
     layoutEditor.innerHTML = `<header class="pkca__layout-editor-header"><div><strong>Layout ${layout.number}</strong><small>${escapeHtml(humanize(layout.layout))}</small></div><button type="button" aria-label="Layout-editor sluiten">×</button></header>
       <form class="pkca__layout-form">${layoutFieldsMarkup(layoutFields, layout.number)}
+        <div class="pkca__layout-status" role="status" aria-live="polite" hidden></div>
         <button class="pkca__layout-save" type="submit">Wijzigingen klaarzetten</button></form>`;
     layoutEditor.querySelector('.pkca__layout-editor-header button').addEventListener('click', event => {
       event.preventDefault();
@@ -480,26 +481,36 @@
 
   async function saveLayout(event, layout, fields) {
     event.preventDefault();
+    const submit = event.currentTarget.querySelector('.pkca__layout-save');
+    if (submit.disabled) return;
+    setLayoutStatus('Wijzigingen controleren…', 'loading');
     const edits = [];
-    event.currentTarget.querySelectorAll('input[data-field-index]:not([type=file]),select[data-field-index],textarea[data-field-index]').forEach(input => {
+    const controls = event.currentTarget.querySelectorAll('input[data-field-index]:not([type=file]),select[data-field-index],textarea[data-field-index]');
+    for (const input of controls) {
       const field = fields[Number(input.dataset.fieldIndex)];
+      if (!field) {
+        setLayoutStatus('Een veld kon niet aan de layout worden gekoppeld. Sluit de editor en probeer het opnieuw.', 'error');
+        return;
+      }
       let value = input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
-      if (value === input.dataset.original) return;
+      if (value === input.dataset.original) continue;
       if (field.type === 'repeater') {
         try {
           value = JSON.parse(value || '[]');
         } catch (_) {
-          addMessage(`Repeater “${field.label}” bevat ongeldige gegevens en is niet aangepast.`, 'error');
+          setLayoutStatus(`Repeater “${field.label}” bevat ongeldige gegevens. Herstel het veld en probeer opnieuw.`, 'error');
           return;
         }
       }
       edits.push({ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value, refresh: field.acf_type === 'wysiwyg' });
-    });
+    }
     if (!edits.length) {
-      addMessage('Er zijn geen velden gewijzigd in deze layout.', 'agent');
-      closeLayoutEditor();
+      setLayoutStatus('Er zijn geen velden gewijzigd in deze layout.', 'info');
       return;
     }
+    submit.disabled = true;
+    submit.textContent = 'Klaarzetten…';
+    setLayoutStatus(`${edits.length} wijziging${edits.length === 1 ? '' : 'en'} klaarzetten…`, 'loading');
     await queueLayoutChanges(edits, `${edits.length} veld${edits.length === 1 ? '' : 'en'} uit layout ${layout.number} aangepast.`);
   }
 
@@ -660,9 +671,23 @@
       }
     } catch (error) {
       addMessage(error.message, 'error');
+      setLayoutStatus(error.message || 'De wijzigingen konden niet worden klaargezet.', 'error');
     } finally {
       setBusy(false);
+      const submit = layoutEditor.querySelector('.pkca__layout-save');
+      if (submit) {
+        submit.disabled = false;
+        submit.textContent = 'Wijzigingen klaarzetten';
+      }
     }
+  }
+
+  function setLayoutStatus(message, kind = 'info') {
+    const status = layoutEditor.querySelector('.pkca__layout-status');
+    if (!status) return;
+    status.hidden = !message;
+    status.className = `pkca__layout-status pkca__layout-status--${kind}`;
+    status.textContent = message || '';
   }
 
   function closeLayoutEditor() {
