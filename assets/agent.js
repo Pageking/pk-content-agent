@@ -64,7 +64,8 @@
   installFormButtons();
   {
     let editorScanQueued = false;
-    new MutationObserver(() => {
+    new MutationObserver(mutations => {
+      if (!mutations.some(mutation => !mutation.target.closest?.('.pkca'))) return;
       if (editorScanQueued) return;
       editorScanQueued = true;
       requestAnimationFrame(() => {
@@ -72,7 +73,7 @@
         installFormButtons();
         installContentButtons();
       });
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-hidden'] });
   }
   loadContext();
 
@@ -420,7 +421,7 @@
     const topInset = stickyTopInset();
     state.contentButtons.forEach(({ button, card }) => {
       const rect = card.getBoundingClientRect();
-      if (!card.isConnected || rect.bottom <= topInset || rect.top > window.innerHeight || rect.width < 1 || rect.height < 1) {
+      if (!contentCardIsVisible(card) || rect.bottom <= topInset || rect.top > window.innerHeight || rect.width < 1 || rect.height < 1) {
         button.hidden = true;
         return;
       }
@@ -428,6 +429,27 @@
       button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
       button.style.top = `${Math.max(topInset, rect.top + 10)}px`;
     });
+  }
+
+  function contentCardIsVisible(card) {
+    if (!card.isConnected || card.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+
+    // Slider libraries often keep every card at the same coordinates. Only the
+    // active slide may receive a management link, otherwise invisible links
+    // stack on top of the visible one and capture its click.
+    const slide = card.closest('.swiper-slide');
+    if (slide) {
+      const wrapper = slide.closest('.swiper-wrapper');
+      if (wrapper?.querySelector('.swiper-slide-active') && !slide.classList.contains('swiper-slide-active')) return false;
+    }
+
+    let element = card;
+    while (element && element !== document.documentElement) {
+      const style = getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) < 0.02) return false;
+      element = element.parentElement;
+    }
+    return true;
   }
 
   function normalizedPath(value) {

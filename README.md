@@ -36,6 +36,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Alleen bevoegde gebruikers krijgen toegang: `edit_post` op gewone pagina’s en `edit_posts` op post-typearchieven.
 - Post types kunnen via de instellingen volledig van de frontend-assistent worden uitgesloten.
 - Dynamisch gekoppelde berichten en Gravity Forms-formulieren krijgen waar mogelijk een directe beheerlink; beide soorten links zijn afzonderlijk uit te schakelen via de instellingen.
+- Bij overlappende sliderkaarten wordt alleen de beheerlink van de actieve, zichtbare kaart getoond.
 
 ## Bewuste beperkingen
 
