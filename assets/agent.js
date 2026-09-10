@@ -10,7 +10,7 @@
   const historyKey = `pkca-history-${config.version || 'current'}-${config.postId}`;
   const positionKey = `pkca-position-${config.postId}`;
   const sizeKey = `pkca-size-${config.postId}`;
-  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], activeLayout: null, previewTargets: new Map() };
+  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], activeLayout: null, previewTargets: new Map() };
   const root = document.createElement('div');
   root.className = 'pkca';
   root.innerHTML = `
@@ -57,6 +57,20 @@
   makeResizable();
   window.addEventListener('scroll', syncLayoutButtons, { passive: true });
   window.addEventListener('resize', syncLayoutButtons);
+  window.addEventListener('scroll', syncFormButtons, { passive: true });
+  window.addEventListener('resize', syncFormButtons);
+  installFormButtons();
+  if (config.formsEditUrl) {
+    let formScanQueued = false;
+    new MutationObserver(() => {
+      if (formScanQueued) return;
+      formScanQueued = true;
+      requestAnimationFrame(() => {
+        formScanQueued = false;
+        installFormButtons();
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
   loadContext();
 
   function setOpen(open) {
@@ -307,6 +321,49 @@
     state.layoutButtons.forEach((button, index) => {
       const rect = sections[index]?.getBoundingClientRect();
       if (!rect || rect.bottom < 0 || rect.top > window.innerHeight) {
+        button.hidden = true;
+        return;
+      }
+      button.hidden = false;
+      button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
+      button.style.top = `${Math.max(8, rect.top + 10)}px`;
+    });
+  }
+
+  function installFormButtons() {
+    if (!config.formsEditUrl) return;
+    const wrappers = Array.from(document.querySelectorAll('.gform_wrapper'));
+    const activeWrappers = new Set(wrappers);
+    state.formButtons = state.formButtons.filter(item => {
+      if (activeWrappers.has(item.form) && item.form.isConnected) return true;
+      item.button.remove();
+      return false;
+    });
+    wrappers.forEach(form => {
+      if (state.formButtons.some(item => item.form === form)) return;
+      const idSource = form.dataset.formid || form.id || form.querySelector('form[id^="gform_"]')?.id || '';
+      const match = String(idSource).match(/(?:gform_wrapper_|gform_)?(\d+)$/);
+      if (!match) return;
+      const formId = Number(match[1]);
+      if (!formId) return;
+      const button = document.createElement('a');
+      button.className = 'pkca__layout-button pkca__form-button';
+      button.href = `${config.formsEditUrl}${formId}`;
+      button.target = '_blank';
+      button.rel = 'noopener';
+      button.innerHTML = '<span aria-hidden="true">✎</span><span class="screen-reader-text">Formulier bewerken</span>';
+      button.title = `Formulier ${formId} bewerken`;
+      button.addEventListener('click', event => event.stopPropagation());
+      root.append(button);
+      state.formButtons.push({ button, form });
+    });
+    syncFormButtons();
+  }
+
+  function syncFormButtons() {
+    state.formButtons.forEach(({ button, form }) => {
+      const rect = form.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.width < 1 || rect.height < 1) {
         button.hidden = true;
         return;
       }

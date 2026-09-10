@@ -59,6 +59,7 @@ final class PKCA_Plugin {
 					'nonce'   => wp_create_nonce( 'wp_rest' ),
 					'postId'  => $target,
 					'title'   => $title,
+					'formsEditUrl' => current_user_can( 'gravityforms_edit_forms' ) ? wp_make_link_relative( admin_url( 'admin.php?page=gf_edit_forms&id=' ) ) : '',
 					'version' => PKCA_VERSION,
 				)
 			) . ';',
