@@ -351,7 +351,7 @@
       button.href = `${config.formsEditUrl}${formId}`;
       button.target = '_blank';
       button.rel = 'noopener';
-      button.innerHTML = '<span aria-hidden="true">✎</span><span class="screen-reader-text">Formulier bewerken</span>';
+      button.innerHTML = '<svg class="pkca__link-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M10.6 13.4a2 2 0 0 0 2.8 0l3-3a2 2 0 1 0-2.8-2.8l-1.2 1.2M13.4 10.6a2 2 0 0 0-2.8 0l-3 3a2 2 0 1 0 2.8 2.8l1.2-1.2"/></svg><span class="screen-reader-text">Formulier bewerken</span>';
       button.title = `Formulier ${formId} bewerken`;
       button.addEventListener('click', event => event.stopPropagation());
       root.append(button);
