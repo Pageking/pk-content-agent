@@ -26,7 +26,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Gebruikt een vaste bedrijfsbriefing voor doelgroep, diensten, positionering, tone of voice, terminologie en controleerbare claims.
 - Kan maximaal tien geselecteerde bronpagina’s als aanvullende bedrijfscontext gebruiken.
 - Ondersteunt bestaande tekst-, WYSIWYG- en afbeeldingsvelden.
-- ACF-galerijen kunnen zonder tussentijds sluiten worden aangevuld, opgeschoond en via slepen gesorteerd.
+- ACF-galerijen kunnen zonder tussentijds sluiten worden aangevuld, opgeschoond en via slepen gesorteerd; de mediabibliotheek werkt daarbij als veilige toevoegmodus.
 - Afbeeldingen kunnen in het chatvenster worden geüpload.
 - De chat blijft tijdens de bewerksessie open en bewaart de laatste 100 berichten per pagina in de browsertab.
 - Meerdere opdrachten worden zonder paginaherlading direct als visuele preview gestapeld.

@@ -831,21 +831,33 @@
       return;
     }
     const gallery = field.type === 'gallery';
-    const frame = wp.media({ title: gallery ? 'Afbeeldingen kiezen' : 'Afbeelding kiezen', library: { type: 'image' }, multiple: gallery, button: { text: 'Gebruiken' } });
-    frame.on('open', () => root.classList.add('pkca--media-open'));
-    frame.on('close', () => root.classList.remove('pkca--media-open'));
+    const frame = wp.media({ title: gallery ? 'Afbeeldingen toevoegen' : 'Afbeelding kiezen', library: { type: 'image' }, multiple: gallery ? 'add' : false, button: { text: gallery ? 'Toevoegen aan galerij' : 'Gebruiken' } });
+    let frameDisposed = false;
+    frame.on('open', () => {
+      root.classList.add('pkca--media-open');
+      if (gallery) window.requestAnimationFrame(() => frame.content?.mode('browse'));
+    });
+    frame.on('close', () => {
+      // Core keeps a closed media modal mounted and visible in some frontend
+      // contexts. Remove it before restoring the agent's high stacking layer.
+      window.setTimeout(() => {
+        if (!frameDisposed) {
+          frameDisposed = true;
+          frame.modal?.close();
+          frame.modal?.remove();
+          frame.remove();
+        }
+        root.classList.remove('pkca--media-open');
+      }, 0);
+    });
     const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
     const current = gallery ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
-    if (gallery && current.length) {
-      frame.on('open', () => {
-        const selection = frame.state().get('selection');
-        current.forEach(id => selection.add(wp.media.attachment(id)));
-      });
-    }
     frame.on('select', async () => {
       const selected = frame.state().get('selection').toJSON();
-      const value = gallery ? [...new Set(selected.map(item => Number(item.id)).filter(Boolean))] : Number(selected[0]?.id || 0);
+      const selectedIds = selected.map(item => Number(item.id)).filter(Boolean);
+      const value = gallery ? [...new Set([...current, ...selectedIds])] : Number(selectedIds[0] || 0);
       if (!value || (Array.isArray(value) && !value.length)) return;
+      frame.modal?.close();
       await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], gallery ? 'Galerij aangepast.' : 'Afbeelding aangepast.', { keepEditor: gallery });
     });
     frame.open();
