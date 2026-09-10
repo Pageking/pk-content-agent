@@ -286,7 +286,7 @@ final class PKCA_REST {
 			$chunk_context['chunk'] = array(
 				'number' => $chunk_index + 1,
 				'total'  => (int) ceil( count( $sections ) / 5 ),
-				'instruction' => 'Controleer ieder editable veld in deze secties. Geef alle concrete wijzigingen terug en sla niets over dat onder de gebruikersopdracht valt.',
+				'instruction' => 'Controleer ieder editable veld in deze secties. Geef alle concrete wijzigingen terug en sla niets over dat onder de gebruikersopdracht valt. Bij een redactionele pagina-audit betekent inconsistentie ook: tekst over een andere dienst of ander onderwerp dan de paginatitel, een afwijkende aanspreekvorm, foutieve CTA-copy en onderling niet-aansluitende koppen, intro\'s en alinea\'s. Een grammaticaal correcte maar inhoudelijk off-topic tekst moet dus ook worden herschreven. Houd terminologie en aanspreekvorm over alle secties gelijk aan de bedrijfscontext en de dominante correcte paginatekst.',
 			);
 			unset( $chunk_context['selection'], $chunk_context['visual_selection'] );
 			$result = PKCA_OpenAI::interpret( $message, $chunk_context, $history );
@@ -307,44 +307,12 @@ final class PKCA_REST {
 			}
 		}
 
-		$missing_placeholders = $this->uncovered_placeholder_fields( $context, $all_changes );
-		foreach ( array_chunk( $missing_placeholders, 10 ) as $required_chunk ) {
-			$required_context = $context;
-			$required_context['request_scope'] = 'required_fields';
-			$required_context['required_targets'] = array_map(
-				static fn( array $target ): array => array(
-					'section'    => $target['section'],
-					'field_path' => $target['field']['path'],
-					'label'      => $target['field']['label'] ?? $target['field']['name'] ?? '',
-					'value'      => $target['field']['value'] ?? '',
-				),
-				$required_chunk
-			);
-			$required_sections = array();
-			foreach ( $required_chunk as $target ) {
-				$section_number = (int) $target['section'];
-				if ( ! isset( $required_sections[ $section_number ] ) ) {
-					$required_sections[ $section_number ] = $target['section_data'];
-					$required_sections[ $section_number ]['fields'] = array();
-				}
-				$required_sections[ $section_number ]['fields'][] = $target['field'];
-			}
-			$required_context['sections'] = array_values( $required_sections );
-			unset( $required_context['selection'], $required_context['visual_selection'] );
-			$required_message = $message . "\n\nVERPLICHTE VOLLEDIGHEIDSCONTROLE: ieder veld in required_targets bevat nog placeholdertekst die onder de opdracht valt. Geef voor IEDER veld een concrete, inhoudelijk passende nieuwe waarde terug. Gebruik exact section en field_path, neem geen ongewijzigde waarden op en bundel alle resultaten in changes_json.";
-			$result = PKCA_OpenAI::interpret( $required_message, $required_context, $history );
-			if ( is_wp_error( $result ) ) {
-				$errors[] = $result;
-				continue;
-			}
-			foreach ( $this->response_changes( $result ) as $candidate ) {
-				if ( ! is_array( $candidate ) || empty( $candidate['section'] ) || empty( $candidate['field_path'] ) ) {
-					continue;
-				}
-				$key = (int) $candidate['section'] . ':' . implode( '.', (array) $candidate['field_path'] );
-				$all_changes[ $key ] = $candidate;
-			}
-		}
+		$this->complete_placeholder_changes( $message, $context, $history, $all_changes, $errors, 5 );
+		// A model can still omit an item from a structured batch. Recalculate from
+		// the actual proposals and retry only the missing fields one by one. The
+		// second individual pass handles an occasional unchanged/invalid response.
+		$this->complete_placeholder_changes( $message, $context, $history, $all_changes, $errors, 1 );
+		$this->complete_placeholder_changes( $message, $context, $history, $all_changes, $errors, 1 );
 
 		$quality_targets = $this->critical_quality_fields( $message, $context );
 		if ( $quality_targets ) {
@@ -446,6 +414,50 @@ final class PKCA_REST {
 			'replacement'  => $changes[0]['replacement'] ?? null,
 			'chunk_errors' => count( $errors ),
 		);
+	}
+
+	private function complete_placeholder_changes( string $message, array $context, array $history, array &$all_changes, array &$errors, int $chunk_size ): void {
+		$missing_placeholders = $this->uncovered_placeholder_fields( $context, $all_changes );
+		foreach ( array_chunk( $missing_placeholders, $chunk_size ) as $required_chunk ) {
+			$required_context = $context;
+			$required_context['request_scope'] = 'required_fields';
+			$required_context['required_targets'] = array_map(
+				static fn( array $target ): array => array(
+					'section'    => $target['section'],
+					'field_path' => $target['field']['path'],
+					'label'      => $target['field']['label'] ?? $target['field']['name'] ?? '',
+					'value'      => $target['field']['value'] ?? '',
+				),
+				$required_chunk
+			);
+			$required_sections = array();
+			foreach ( $required_chunk as $target ) {
+				$section_number = (int) $target['section'];
+				if ( ! isset( $required_sections[ $section_number ] ) ) {
+					$required_sections[ $section_number ] = $target['section_data'];
+					$required_sections[ $section_number ]['fields'] = array();
+				}
+				$required_sections[ $section_number ]['fields'][] = $target['field'];
+			}
+			$required_context['sections'] = array_values( $required_sections );
+			unset( $required_context['selection'], $required_context['visual_selection'] );
+			$required_message = $message . "\n\nVERPLICHTE VOLLEDIGHEIDSCONTROLE: ieder veld in required_targets bevat nog placeholdertekst die onder de opdracht valt. Geef voor IEDER veld een concrete, inhoudelijk passende nieuwe waarde terug. Gebruik exact section en field_path, neem geen ongewijzigde waarden op en bundel alle resultaten in changes_json.";
+			if ( 1 === count( $required_chunk ) ) {
+				$required_message .= ' Dit is exact één verplicht tekstveld: geef action=change met een concrete nieuwe volledige value en exact hetzelfde section en field_path. Geef geen answer of clarify en kies geen bovenliggend repeaterveld.';
+			}
+			$result = PKCA_OpenAI::interpret( $required_message, $required_context, $history );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $result;
+				continue;
+			}
+			foreach ( $this->response_changes( $result ) as $candidate ) {
+				if ( ! is_array( $candidate ) || empty( $candidate['section'] ) || empty( $candidate['field_path'] ) ) {
+					continue;
+				}
+				$key = (int) $candidate['section'] . ':' . implode( '.', (array) $candidate['field_path'] );
+				$all_changes[ $key ] = $candidate;
+			}
+		}
 	}
 
 	private function response_changes( array $result ): array {
