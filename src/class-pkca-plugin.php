@@ -59,7 +59,7 @@ final class PKCA_Plugin {
 					'nonce'   => wp_create_nonce( 'wp_rest' ),
 					'postId'  => $target,
 					'title'   => $title,
-					'formsEditUrl' => current_user_can( 'gravityforms_edit_forms' ) ? wp_make_link_relative( admin_url( 'admin.php?page=gf_edit_forms&id=' ) ) : '',
+					'formsEditUrl' => get_option( 'pkca_enable_form_edit_links', true ) && current_user_can( 'gravityforms_edit_forms' ) ? wp_make_link_relative( admin_url( 'admin.php?page=gf_edit_forms&id=' ) ) : '',
 					'version' => PKCA_VERSION,
 				)
 			) . ';',
@@ -170,6 +170,8 @@ final class PKCA_Plugin {
 		);
 		register_setting( 'pkca_settings', 'pkca_context_source_posts', array( 'type' => 'array', 'default' => array(), 'sanitize_callback' => array( $this, 'sanitize_context_source_posts' ), 'show_in_rest' => false ) );
 		register_setting( 'pkca_settings', 'pkca_excluded_post_types', array( 'type' => 'array', 'default' => array(), 'sanitize_callback' => array( $this, 'sanitize_excluded_post_types' ), 'show_in_rest' => false ) );
+		register_setting( 'pkca_settings', 'pkca_enable_post_edit_links', array( 'type' => 'boolean', 'default' => true, 'sanitize_callback' => 'rest_sanitize_boolean', 'show_in_rest' => false ) );
+		register_setting( 'pkca_settings', 'pkca_enable_form_edit_links', array( 'type' => 'boolean', 'default' => true, 'sanitize_callback' => 'rest_sanitize_boolean', 'show_in_rest' => false ) );
 	}
 
 	public function sanitize_context_source_posts( mixed $value ): array {
@@ -262,6 +264,12 @@ final class PKCA_Plugin {
 					<?php endforeach; ?>
 				</select>
 				<p class="description">Gebruik Cmd/Ctrl om meerdere bronnen te selecteren.</p>
+				<h2>Directe beheerlinks</h2>
+				<p>Bepaal welke extra link-iconen de plugin naast de gewone layoutpotloodjes toont.</p>
+				<input type="hidden" name="pkca_enable_post_edit_links" value="0">
+				<label style="display:block;margin:7px 0"><input type="checkbox" name="pkca_enable_post_edit_links" value="1" <?= checked( (bool) get_option( 'pkca_enable_post_edit_links', true ), true, false ); ?>> Toon beheerlinks bij dynamisch gekoppelde berichten</label>
+				<input type="hidden" name="pkca_enable_form_edit_links" value="0">
+				<label style="display:block;margin:7px 0"><input type="checkbox" name="pkca_enable_form_edit_links" value="1" <?= checked( (bool) get_option( 'pkca_enable_form_edit_links', true ), true, false ); ?>> Toon beheerlinks bij Gravity Forms-formulieren</label>
 				<h2>Beschikbaarheid</h2>
 				<p>Selecteer de post types waarop de content-assistent volledig uitgeschakeld moet zijn, inclusief het bijbehorende archief.</p>
 				<fieldset>

@@ -443,13 +443,14 @@ final class PKCA_Content {
 	}
 
 	private static function link_targets(): array {
+		$edit_links_enabled = (bool) get_option( 'pkca_enable_post_edit_links', true );
 		$targets = array();
 		$post_types = array_values( get_post_types( array( 'public' => true ), 'names' ) );
 		$post_types = array_values( array_diff( $post_types, array( 'attachment' ) ) );
 		foreach ( get_posts( array( 'post_type' => $post_types, 'post_status' => 'publish', 'posts_per_page' => 500, 'orderby' => 'title', 'order' => 'ASC' ) ) as $post ) {
 			$url = get_permalink( $post );
 			if ( $url ) {
-				$targets[] = array( 'id' => $post->ID, 'title' => get_the_title( $post ), 'url' => wp_make_link_relative( $url ), 'post_type' => $post->post_type, 'edit_url' => current_user_can( 'edit_post', $post->ID ) ? wp_make_link_relative( get_edit_post_link( $post->ID, 'raw' ) ) : '' );
+				$targets[] = array( 'id' => $post->ID, 'title' => get_the_title( $post ), 'url' => wp_make_link_relative( $url ), 'post_type' => $post->post_type, 'edit_url' => $edit_links_enabled && current_user_can( 'edit_post', $post->ID ) ? wp_make_link_relative( get_edit_post_link( $post->ID, 'raw' ) ) : '' );
 			}
 		}
 		return $targets;
