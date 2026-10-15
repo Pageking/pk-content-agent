@@ -1357,9 +1357,25 @@
         changedElement = previewButtonOption(section, item);
       } else if (item.type === 'text') {
         const oldText = normalizeText(stripHtml(String(item.old_value ?? '')));
-        const newHtml = String(item.new_value ?? '');
+        const newHtml = String(item.new_preview_html ?? item.new_value ?? '');
         const newText = stripHtml(newHtml);
         const existingTarget = state.previewTargets.get(targetKey);
+        if (typeof item.new_preview_html === 'string') {
+          const values = [item.old_value, item.new_value].map(value => normalizeText(stripHtml(String(value ?? '')))).filter(Boolean);
+          const cached = existingTarget?.node?.isConnected ? existingTarget.node : null;
+          const cachedElement = cached?.nodeType === Node.TEXT_NODE ? cached.parentElement : cached;
+          const ownsWholeField = cachedElement && (cached.nodeType !== Node.TEXT_NODE || normalizeText(cachedElement.textContent) === normalizeText(cached.nodeValue));
+          const candidates = Array.from(section.querySelectorAll('.pk-text, .wysiwyg, .wysiwyg-gaps, .pk-heading-text, .subtitle, .sub-title, h1, h2, h3, h4, h5, h6, p, span'));
+          const element = (ownsWholeField ? cachedElement : null) || candidates.find(candidate => values.includes(normalizeText(candidate.textContent)));
+          if (element) {
+            element.innerHTML = newHtml;
+            state.previewTargets.set(targetKey, { type: 'text', node: element });
+            element.classList.add('pkca-preview-target');
+            element.setAttribute('data-pkca-preview', 'true');
+            applied.add(previewKey(item));
+            return;
+          }
+        }
         const selectedElement = state.selectedTarget?.section === Number(item.section)
           && state.selectedTarget?.type === 'text'
           && Array.isArray(state.selectedTarget.fieldPath)
@@ -1807,6 +1823,7 @@
 
   function reversePreviewChange(item) {
     return { ...item, old_value: item.new_value, new_value: item.old_value,
+      old_preview_html: item.new_preview_html, new_preview_html: item.old_preview_html,
       old_url: item.new_url, new_url: item.old_url, new_html: item.old_html,
       old_images: item.new_images, new_images: item.old_images };
   }

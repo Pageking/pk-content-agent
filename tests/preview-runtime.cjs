@@ -75,5 +75,15 @@ const html='<main><div class="flex-repeater"><div class="flex-content"><div clas
  d.querySelector('.pkca__form textarea').value='Pas de tekst aan';d.querySelector('.pkca__form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
  await new Promise(r=>setTimeout(r,15));assert.equal(box.textContent,'Direct chat preview');assert.equal(w.testReloads,undefined);
  console.log('PASS: individual image rollback and chat text changes avoid navigation and reloads.');
+ const subtitle=d.createElement('h2');subtitle.className='subtitle';subtitle.textContent='Zoveel expertise. Zo dichtbij.';section.append(subtitle);
+ const lines={...text,id:'line-breaks',field_path:['subtitle'],old_value:'Zoveel expertise. Zo dichtbij.',new_value:'Zoveel expertise.\nZo dichtbij.',old_preview_html:'Zoveel expertise. Zo dichtbij.',new_preview_html:'Zoveel expertise.<br />\nZo dichtbij.'};
+ assert(api.applyPreview([lines]).has(api.previewKey(lines)));assert.equal(subtitle.querySelectorAll('br').length,1);
+ const more={...lines,new_value:'Zoveel expertise.\n\nZo dichtbij.',new_preview_html:'Zoveel expertise.<br />\n<br />\nZo dichtbij.'};
+ api.applyPreview([more]);assert.equal(subtitle.querySelectorAll('br').length,2);
+ api.applyPreview([{...lines,new_value:lines.old_value,new_preview_html:lines.old_value}]);assert.equal(subtitle.querySelectorAll('br').length,0);
+ api.applyPreview([lines]);api.applyPreview([api.reversePreviewChange(lines)]);assert.equal(subtitle.textContent,lines.old_value);assert(!subtitle.querySelector('br'));
+ api.state.previewTargets.clear();subtitle.innerHTML=lines.new_preview_html;assert(api.applyPreview([lines]).has(api.previewKey(lines)));assert.equal(subtitle.querySelectorAll('br').length,1);
+ console.log('PASS: textarea Enter, blank lines, repeated edits and undo match formatted ACF output, including existing server previews.');
+
 dom.window.close();
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -301,10 +301,10 @@ final class PKCA_Content {
 				$terms = get_terms( array( 'taxonomy' => (string) ( $definition['taxonomy'] ?? '' ), 'hide_empty' => false ) );
 				foreach ( is_wp_error( $terms ) ? array() : $terms as $term ) $term_choices[ $term->term_id ] = html_entity_decode( $term->name, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 			}
-			if ( 'textarea' === $acf_type && is_string( $value ) ) {
+			if ( 'textarea' === $acf_type && 'br' === ( $definition['new_lines'] ?? '' ) && is_string( $value ) ) {
 				// ACF may already have formatted new lines as <br>. Never feed that
 				// presentation HTML back into the raw textarea value on save.
-				$value = preg_replace( '/(?:<br\s*\/?>\s*)+/i', "\n", $value );
+				$value = preg_replace( '/<br\s*\/?>[\t ]*(?:\r\n|\r|\n)?/i', "\n", $value );
 			}
 			$index = null;
 			foreach ( $fields as $field_index => $field ) {
@@ -519,6 +519,13 @@ final class PKCA_Content {
 	}
 
 	private static function decorate_change( array $change ): array {
+		if ( 'text' === ( $change['type'] ?? '' ) ) {
+			$definition = acf_get_field( $change['field_key'] ?? '' );
+			if ( 'textarea' === ( $definition['type'] ?? '' ) && in_array( $definition['new_lines'] ?? '', array( 'br', 'wpautop' ), true ) ) {
+				$change['new_preview_html'] = self::format_text_preview( (string) $change['new_value'], $definition );
+				$change['old_preview_html'] = self::format_text_preview( (string) $change['old_value'], $definition );
+			}
+		}
 		if ( 'image' === ( $change['type'] ?? '' ) ) {
 			$change['old_url'] = wp_get_attachment_image_url( (int) $change['old_value'], 'full' ) ?: '';
 			$change['new_url'] = wp_get_attachment_image_url( (int) $change['new_value'], 'full' ) ?: '';
@@ -859,6 +866,7 @@ final class PKCA_Content {
 	}
 
 	private static function format_preview_value( array $change ): mixed {
+		if ( 'text' === $change['type'] ) return self::format_text_preview( (string) $change['new_value'], acf_get_field( $change['field_key'] ?? '' ) ?: array() );
 		if ( 'taxonomy' === $change['type'] ) {
 			$definition = acf_get_field( $change['field_key'] ?? '' );
 			if ( 'object' === ( $definition['return_format'] ?? '' ) ) {
@@ -874,6 +882,15 @@ final class PKCA_Content {
 			return array_map( static fn( $id ) => function_exists( 'acf_get_attachment' ) ? acf_get_attachment( (int) $id ) : (int) $id, (array) $change['new_value'] );
 		}
 		return $change['new_value'];
+	}
+
+	private static function format_text_preview( string $value, array $definition ): string {
+		if ( 'textarea' !== ( $definition['type'] ?? '' ) ) return $value;
+		return match ( $definition['new_lines'] ?? '' ) {
+			'br' => nl2br( $value ),
+			'wpautop' => wpautop( $value ),
+			default => $value,
+		};
 	}
 
 	private static function set_nested_value( array &$value, array $path, mixed $replacement ): void {
