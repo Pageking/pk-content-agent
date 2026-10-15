@@ -14,7 +14,7 @@
     if (!row.querySelector('.pkca-global-notice')) {
       const notice = document.createElement('div');
       notice.className = 'notice notice-info pkca-global-notice';
-      notice.textContent = 'Je bewerkt een gedeeld blok. Wijzigingen gelden op alle pagina’s waar dit blok gebruikt wordt.';
+      notice.textContent = 'Je bewerkt een gedeelde layout. Wijzigingen gelden op alle pagina’s waar deze layout gebruikt wordt.';
       row.querySelector('td.acf-fields')?.prepend(notice);
     }
   }

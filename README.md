@@ -23,7 +23,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 
 - Inventariseert alle rijen van `content_repeater → flex_content` zonder layouts hard te coderen.
 - Koppelt bewerkknoppen aan de juiste ACF-rij met exacte layoutklassen; afwijkende klassennamen worden uit het layouttemplate gelezen. De filter `pkca_layout_classes` kan aanvullende klassennamen leveren.
-- Toont globale blokken als gedeelde content, met titel, uitleg over doorwerking en een directe link die het bronblok in WordPress uitlicht.
+- Toont globale blokken als gedeelde layouts, met titel, uitleg over doorwerking en een directe link die de bronlayout in WordPress uitlicht.
 - Bewaart niet-verwerkte invoer per pagina in de browsertab, ook bij sluiten of herladen. **Invoer verwerpen** herstelt de velden naar de actuele preview.
 - Houdt tekstinvoer vast bij mediawijzigingen en voorkomt dubbele rijacties bij herhaald openen.
 - Zet een batch velden als geheel klaar en blokkeert overschrijven als de broncontent ondertussen verandert.

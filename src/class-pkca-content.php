@@ -77,7 +77,7 @@ final class PKCA_Content {
 				if ( $selected !== (string) ( $global['global_block_id'] ?? '' ) ) continue;
 				$section['shared'] = array(
 					'id' => $selected,
-					'title' => (string) ( $global['global_block_title'] ?? 'Gedeeld blok' ),
+					'title' => (string) ( $global['global_block_title'] ?? 'Gedeelde layout' ),
 					'edit_url' => current_user_can( 'edit_posts' ) ? wp_make_link_relative( admin_url( 'admin.php?page=pk_global_blocks' ) ) . '#pkca-global-' . rawurlencode( $selected ) : '',
 					'layouts' => array_map( static fn( array $layout ): array => array( 'layout' => (string) ( $layout['acf_fc_layout'] ?? '' ), 'selectors' => self::layout_selectors( (string) ( $layout['acf_fc_layout'] ?? '' ) ) ), (array) ( $global['flex_content'] ?? array() ) ),
 				);

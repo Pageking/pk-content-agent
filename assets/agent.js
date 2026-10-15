@@ -154,7 +154,7 @@
         root.classList.remove('pkca--selecting');
         toggle.textContent = 'Pagina aanpassen';
         setOpen(true);
-        addMessage(`Dit onderdeel hoort bij het gedeelde blok “${shared.title}”. Wijzigingen aan dit bronblok gelden op alle pagina’s waar het gebruikt wordt. Gebruik de link “Gedeeld blok bewerken” op de pagina.`, 'agent');
+        addMessage(`Dit onderdeel hoort bij de gedeelde layout “${shared.title}”. Wijzigingen aan deze bronlayout gelden op alle pagina’s waar deze gebruikt wordt. Gebruik de link “Gedeelde layout bewerken” op de pagina.`, 'agent');
         return;
       }
 	  const sectionNumber = Number(section.dataset.pkcaSectionNumber || 0);
@@ -330,9 +330,9 @@
       button.title = `${layout.label || humanize(layout.layout)} bewerken`;
       if (shared) {
         button.classList.add('pkca__shared-button');
-        button.setAttribute('aria-label', `Gedeeld blok bewerken: ${shared.title}`);
+        button.setAttribute('aria-label', `Gedeelde layout bewerken: ${shared.title}`);
         button.title = `${shared.title} · wijzigingen gelden overal waar dit blok gebruikt wordt`;
-        button.innerHTML = `<span aria-hidden="true">↗</span><span><strong>Gedeeld blok · ${escapeHtml(shared.title)}</strong><small>Bronblok bewerken · geldt op meerdere pagina’s</small></span>`;
+        button.innerHTML = `<span aria-hidden="true">↗</span><span><strong>Gedeelde layout · ${escapeHtml(shared.title)}</strong><small>Bronlayout bewerken · geldt op meerdere pagina’s</small></span>`;
         if (shared.edit_url) {
           button.href = shared.edit_url;
           button.target = '_blank';
