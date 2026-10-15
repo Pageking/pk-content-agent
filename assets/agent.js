@@ -1586,6 +1586,9 @@
   function sameReviewValue(value, other) {
     if (value === other) return true;
     if (!value || !other || typeof value !== 'object' || typeof other !== 'object') return false;
+    if (value.url && other.url && (value.ID || value.id) && (other.ID || other.id)) {
+      return String(value.ID || value.id) === String(other.ID || other.id);
+    }
     const keys = Object.keys(value);
     return keys.length === Object.keys(other).length && keys.every(key => Object.hasOwn(other, key) && sameReviewValue(value[key], other[key]));
   }

@@ -1034,6 +1034,12 @@ final class PKCA_Content {
 
 	private static function normalize_nested_for_compare( mixed $value ): mixed {
 		if ( is_array( $value ) ) {
+			// ACF attachment arrays include metadata which sanitization can coerce
+			// (for example author "5" to 5). Selecting an image changes its ID,
+			// not that transport metadata.
+			if ( isset( $value['url'] ) && ( isset( $value['ID'] ) || isset( $value['id'] ) ) ) {
+				return (int) ( $value['ID'] ?? $value['id'] );
+			}
 			foreach ( $value as $key => $item ) {
 				$value[ $key ] = self::normalize_nested_for_compare( $item );
 			}
@@ -1087,7 +1093,11 @@ final class PKCA_Content {
 	public static function get_changes( int|string $post_id ): array {
 		if ( null !== self::$staged_changes ) return self::$staged_changes;
 		$value = get_transient( self::transient_key( $post_id ) );
-		return is_array( $value ) ? $value : array();
+		// Older previews can contain repeaters queued solely by attachment
+		// metadata coercion. Exclude these from inspection and publication too.
+		return is_array( $value ) ? array_values( array_filter( $value, static fn( array $change ): bool =>
+			'repeater' !== ( $change['type'] ?? '' ) || ! self::stored_values_match( $change['old_value'] ?? null, $change['new_value'] ?? null, 'repeater' )
+		) ) : array();
 	}
 
 	private static function save_changes( int|string $post_id, array $changes ): void {
