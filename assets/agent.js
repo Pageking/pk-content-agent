@@ -628,6 +628,11 @@
       const button = event.target.closest('[data-repeater-action]');
       if (button) { event.preventDefault(); updateRepeater(button, layoutFields[Number(button.dataset.fieldIndex)]); }
     };
+    // Browsers normalize input line breaks and select defaults while parsing.
+    // Compare against the mounted control, never its differently serialized HTML.
+    layoutEditor.querySelectorAll('[data-field-index][data-original]').forEach(input => {
+      input.dataset.original = input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
+    });
     restoreLayoutDraft(layout.number);
     initWysiwygControls();
     applyConditionalLogic();
@@ -722,9 +727,11 @@
     } else if (field.acf_type === 'wysiwyg') {
       control = `<div class="pkca__wysiwyg"><div class="pkca__wysiwyg-toolbar" role="toolbar" aria-label="Tekstopmaak"><select data-wysiwyg-format aria-label="Teksttype" title="Teksttype"><option value="p">Paragraaf</option><option value="h1">Kop 1</option><option value="h2">Kop 2</option><option value="h3">Kop 3</option><option value="h4">Kop 4</option><option value="h5">Kop 5</option><option value="h6">Kop 6</option></select><button type="button" data-command="bold" title="Vet"><strong>B</strong></button><button type="button" data-command="italic" title="Cursief"><em>I</em></button><button type="button" data-command="createLink" title="Link toevoegen">↗</button><button type="button" data-command="unlink" title="Link verwijderen">×↗</button><button type="button" data-command="insertUnorderedList" title="Opsomming">• Lijst</button><button type="button" data-command="insertOrderedList" title="Genummerde lijst">1. Lijst</button><button type="button" class="pkca__wysiwyg-mode" data-wysiwyg-mode="html" aria-pressed="false">HTML</button></div><div class="pkca__wysiwyg-editor" contenteditable="true">${rawValue}</div><textarea hidden class="pkca__wysiwyg-source" data-wysiwyg-value data-field-index="${index}" data-original="${escapeHtml(rawValue)}" aria-label="HTML-broncode">${escapeHtml(rawValue)}</textarea></div>`;
     } else {
-      control = field.type === 'link' || plainValue.length < 90
-        ? `<input type="text"${field.type === 'link' ? ' inputmode="url"' : ''} placeholder="${escapeHtml(field.placeholder || '')}" value="${escapeHtml(plainValue)}" data-field-index="${index}" data-original="${escapeHtml(plainValue)}">`
-        : `<textarea rows="4" placeholder="${escapeHtml(field.placeholder || '')}" data-field-index="${index}" data-original="${escapeHtml(plainValue)}">${escapeHtml(plainValue)}</textarea>`;
+      const editorValue = field.type === 'text' ? rawValue : plainValue;
+      const multiline = field.acf_type === 'textarea' || /[\r\n]/.test(editorValue) || editorValue.length >= 90;
+      control = field.type === 'link' || !multiline
+        ? `<input type="text"${field.type === 'link' ? ' inputmode="url"' : ''} placeholder="${escapeHtml(field.placeholder || '')}" value="${escapeHtml(editorValue)}" data-field-index="${index}" data-original="${escapeHtml(editorValue)}">`
+        : `<textarea rows="4" placeholder="${escapeHtml(field.placeholder || '')}" data-field-index="${index}" data-original="${escapeHtml(editorValue)}">${escapeHtml(editorValue)}</textarea>`;
     }
 	if (field.acf_type === 'wysiwyg') {
 	  return `<div class="pkca__layout-field" ${meta}><span>${escapeHtml(label)}${field.required ? ' *' : ''}</span>${help}${control}</div>`;
@@ -888,7 +895,7 @@
     submit.disabled = true;
     submit.textContent = 'Klaarzetten…';
     setLayoutStatus(`${edits.length} wijziging${edits.length === 1 ? '' : 'en'} klaarzetten…`, 'loading');
-    await queueLayoutChanges(edits, `${edits.length} veld${edits.length === 1 ? '' : 'en'} uit layout ${layout.number} aangepast.`);
+    await queueLayoutChanges(edits, count => `${count} veld${count === 1 ? '' : 'en'} uit layout ${layout.number} aangepast.`);
   }
 
   async function uploadLayoutImage(input, layout, field) {
@@ -1136,14 +1143,15 @@
       syncContextWithChanges(state.context.changes);
       const applied = applyPreview(state.context.changes);
       renderChanges(state.context.changes);
-      addMessage(data.queued === 0 && data.unchanged > 0 ? 'Deze wijziging stond al klaar; de pagina-preview is opnieuw gesynchroniseerd.' : confirmation, 'agent');
+      const message = typeof confirmation === 'function' ? confirmation(data.queued ?? edits.length) : confirmation;
+      addMessage(data.queued === 0 && data.unchanged > 0 ? 'Deze wijziging stond al klaar; de pagina-preview is opnieuw gesynchroniseerd.' : message, 'agent');
       const requiresRefresh = state.layoutNeedsRefresh || edits.some(edit => {
         const pending = state.context.changes.find(item => Number(item.section) === Number(edit.section) && item.field_path.join('.') === edit.field_path.join('.'));
         return pending && !applied.has(previewKey(pending));
       });
       if (keepEditor && state.activeLayout === editorIndex) {
         state.layoutNeedsRefresh ||= requiresRefresh;
-        refreshOpenLayoutEditor(confirmation, edits);
+        refreshOpenLayoutEditor(message, edits);
       } else if (state.activeLayout === editorIndex) {
         closeLayoutEditor(false);
       }

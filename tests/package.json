@@ -1,5 +1,11 @@
 {
   "private": true,
-  "scripts": { "test:preview": "node preview-runtime.cjs" },
-  "devDependencies": { "jsdom": "30.1.3" }
+  "scripts": {
+    "test:preview": "node preview-runtime.cjs",
+    "test:editor": "node editor-changes.cjs",
+    "test": "node preview-runtime.cjs && node editor-changes.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.3"
+  }
 }
