@@ -470,6 +470,9 @@
         // Breadcrumbs and other navigation lists can link to editable posts,
         // but their purpose is navigation rather than rendering content cards.
         if (anchor.closest('nav, [role="navigation"], .breadcrumb, [class*="breadcrumb"]')) return;
+        // A layout's CTA edits belong to that layout. Its destination does not
+        // make the surrounding accordion/slider item a linked content card.
+        if (anchor.matches('.pk-button') || anchor.closest('.pk-button-group')) return;
         const anchorUrl = new URL(anchor.href, window.location.href);
         // An in-page CTA such as href="#contact" resolves to the current
         // permalink. It is navigation within this page, not linked content
