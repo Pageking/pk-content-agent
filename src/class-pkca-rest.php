@@ -27,7 +27,7 @@ final class PKCA_REST {
 		foreach ( $items as $item ) {
 			if ( ! is_array( $item ) ) return new WP_Error( 'pkca_invalid_change', 'Een van de wijzigingen is ongeldig.', array( 'status' => 422 ) );
 			$type = sanitize_key( (string) ( $item['type'] ?? '' ) );
-			if ( ! in_array( $type, array( 'text', 'link', 'image', 'gallery', 'repeater', 'number', 'boolean', 'option', 'email', 'color' ), true ) ) {
+			if ( ! in_array( $type, array( 'text', 'link', 'image', 'gallery', 'repeater', 'number', 'boolean', 'option', 'email', 'color', 'taxonomy' ), true ) ) {
 				return new WP_Error( 'pkca_change_type', 'Dit veldtype kan niet veilig worden bewerkt.', array( 'status' => 422 ) );
 			}
 			$prepared[] = array(
@@ -90,7 +90,7 @@ final class PKCA_REST {
 					),
 					array_filter(
 						(array) ( $section_context['fields'] ?? array() ),
-						static fn( array $field ): bool => in_array( $field['type'] ?? '', array( 'repeater', 'gallery' ), true ) && false !== ( $field['editable'] ?? true )
+						static fn( array $field ): bool => in_array( $field['type'] ?? '', array( 'repeater', 'gallery', 'taxonomy' ), true ) && false !== ( $field['editable'] ?? true )
 					)
 				)
 			);
@@ -142,7 +142,7 @@ final class PKCA_REST {
 				}
 				$item['field_name'] = $field['name'];
 				$item['field_type'] = $field['type'];
-				if ( in_array( $item['field_type'], array( 'repeater', 'gallery' ), true ) ) {
+				if ( in_array( $item['field_type'], array( 'repeater', 'gallery', 'taxonomy' ), true ) ) {
 					$item['value'] = json_decode( (string) ( $item['value_json'] ?? '' ), true );
 					if ( ! is_array( $item['value'] ) ) {
 						return new WP_Error( 'pkca_structured_value', 'Een van de voorgestelde verzamelvelden kon niet veilig worden verwerkt.', array( 'status' => 422 ) );
@@ -211,7 +211,7 @@ final class PKCA_REST {
 			return rest_ensure_response( $action );
 		}
 		if ( ! empty( $selection ) && 'change' === ( $action['action'] ?? '' ) ) {
-			$is_structural = in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true );
+			$is_structural = in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery', 'taxonomy' ), true );
 			if ( empty( $selection['field_path'] ) && ! $is_structural ) {
 				$intent_field = $this->resolve_field_from_layout_intent( $action, $original_message, $selection, $context );
 				if ( ! $intent_field ) {
@@ -243,7 +243,7 @@ final class PKCA_REST {
 		}
 		$action = $this->enforce_selected_partial_replacement( $action, $original_message, $selection ?? array() );
 		if ( 'change' === ( $action['action'] ?? '' ) ) {
-			if ( in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery' ), true ) ) {
+			if ( in_array( $action['field_type'] ?? '', array( 'repeater', 'gallery', 'taxonomy' ), true ) ) {
 				$decoded_value = json_decode( (string) ( $action['value_json'] ?? '' ), true );
 				if ( ! is_array( $decoded_value ) ) {
 					return new WP_Error( 'pkca_structured_value', 'De voorgestelde rijen konden niet veilig worden verwerkt.', array( 'status' => 422 ) );

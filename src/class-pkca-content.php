@@ -296,6 +296,11 @@ final class PKCA_Content {
 			}
 
 			$type = self::schema_transport_type( $acf_type, $current_path );
+			$term_choices = array();
+			if ( 'taxonomy' === $type ) {
+				$terms = get_terms( array( 'taxonomy' => (string) ( $definition['taxonomy'] ?? '' ), 'hide_empty' => false ) );
+				foreach ( is_wp_error( $terms ) ? array() : $terms as $term ) $term_choices[ $term->term_id ] = html_entity_decode( $term->name, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+			}
 			if ( 'textarea' === $acf_type && is_string( $value ) ) {
 				// ACF may already have formatted new lines as <br>. Never feed that
 				// presentation HTML back into the raw textarea value on save.
@@ -320,7 +325,9 @@ final class PKCA_Content {
 				'preview'    => self::preview_value( $value, $type ),
 				'value'      => self::transport_value( $value, $type ),
 				'url'        => 'image' === $type && $id ? (string) wp_get_attachment_image_url( $id, 'medium' ) : '',
-				'choices'    => (array) ( $definition['choices'] ?? array() ),
+				'choices'    => 'taxonomy' === $type ? $term_choices : (array) ( $definition['choices'] ?? array() ),
+				'taxonomy'   => 'taxonomy' === $type ? (string) ( $definition['taxonomy'] ?? '' ) : '',
+				'multiple'   => ! empty( $definition['multiple'] ) || in_array( $definition['field_type'] ?? '', array( 'checkbox', 'multi_select' ), true ),
 				'images'     => 'gallery' === $acf_type ? self::gallery_images( $value ) : array(),
 				'instructions' => (string) ( $definition['instructions'] ?? '' ),
 				'group_instructions' => $parent_instructions,
@@ -488,7 +495,8 @@ final class PKCA_Content {
 			'select', 'radio', 'button_group' => 'option',
 			'email' => 'email',
 			'color_picker' => 'color',
-			'post_object', 'relationship', 'page_link', 'taxonomy', 'user' => 'post',
+			'taxonomy' => 'taxonomy',
+			'post_object', 'relationship', 'page_link', 'user' => 'post',
 			'text', 'textarea', 'wysiwyg', 'oembed' => 'text',
 			default => 'url' === (string) end( $path ) && in_array( 'button', $path, true ) ? 'link' : 'unsupported',
 		};
@@ -585,6 +593,7 @@ final class PKCA_Content {
 	}
 
 	private static function preview_value( mixed $value, string $type ): string {
+		if ( 'taxonomy' === $type ) return '';
 		if ( 'image' === $type ) {
 			$id = is_array( $value ) ? (int) ( $value['ID'] ?? 0 ) : (int) $value;
 			return (string) ( get_the_title( $id ) ?: basename( (string) wp_get_attachment_url( $id ) ) );
@@ -609,6 +618,7 @@ final class PKCA_Content {
 	}
 
 	private static function transport_value( mixed $value, string $type ): mixed {
+		if ( 'taxonomy' === $type ) return self::term_ids( $value );
 		if ( 'image' === $type ) {
 			return is_array( $value ) ? (int) $value['ID'] : (int) $value;
 		}
@@ -631,6 +641,10 @@ final class PKCA_Content {
 			return is_numeric( $value ) ? $value + 0 : '';
 		}
 		return is_scalar( $value ) || null === $value ? (string) $value : '';
+	}
+
+	private static function term_ids( mixed $value ): array {
+		return array_values( array_unique( array_filter( array_map( static fn( $term ): int => (int) ( $term instanceof WP_Term ? $term->term_id : ( is_array( $term ) ? ( $term['term_id'] ?? 0 ) : $term ) ), is_array( $value ) ? $value : array( $value ) ) ) ) );
 	}
 
 	public static function add_changes( int|string $post_id, array $items ): array|WP_Error {
@@ -682,7 +696,15 @@ final class PKCA_Content {
 				break;
 			}
 		}
-		if ( 'repeater' === $target['field']['type'] ) {
+		if ( 'taxonomy' === $target['field']['type'] ) {
+			$ids = self::term_ids( $change['value'] ?? array() );
+			foreach ( $ids as $id ) {
+				if ( ! term_exists( $id, $target['field']['taxonomy'] ) ) return new WP_Error( 'pkca_invalid_term', 'Deze keuze hoort niet bij dit veld.', array( 'status' => 422 ) );
+			}
+			if ( empty( $target['field']['multiple'] ) && count( $ids ) > 1 ) return new WP_Error( 'pkca_invalid_term_count', 'Kies maximaal één optie.', array( 'status' => 422 ) );
+			if ( ! empty( $target['field']['required'] ) && ! $ids ) return new WP_Error( 'pkca_required_terms', 'Kies minimaal één optie.', array( 'status' => 422 ) );
+			$new_value = ! empty( $target['field']['multiple'] ) ? $ids : ( $ids[0] ?? false );
+		} elseif ( 'repeater' === $target['field']['type'] ) {
 			$new_value = self::sanitize_nested( is_array( $change['value'] ?? null ) ? $change['value'] : array() );
 			$count = count( $new_value );
 			$minimum = (int) ( $target['field']['min'] ?? 0 );
@@ -834,6 +856,14 @@ final class PKCA_Content {
 	}
 
 	private static function format_preview_value( array $change ): mixed {
+		if ( 'taxonomy' === $change['type'] ) {
+			$definition = acf_get_field( $change['field_key'] ?? '' );
+			if ( 'object' === ( $definition['return_format'] ?? '' ) ) {
+				$terms = array_map( static fn( $id ) => get_term( $id, $definition['taxonomy'] ), self::term_ids( $change['new_value'] ) );
+				return is_array( $change['new_value'] ) ? $terms : ( $terms[0] ?? false );
+			}
+			return $change['new_value'];
+		}
 		if ( 'image' === $change['type'] ) {
 			return function_exists( 'acf_get_attachment' ) ? acf_get_attachment( (int) $change['new_value'] ) : (int) $change['new_value'];
 		}
@@ -997,6 +1027,11 @@ final class PKCA_Content {
 	}
 
 	private static function stored_values_match( mixed $stored, mixed $expected, string $type ): bool {
+		if ( 'taxonomy' === $type ) {
+			$a = self::term_ids( $stored ); $b = self::term_ids( $expected );
+			sort( $a ); sort( $b );
+			return $a === $b;
+		}
 		if ( 'text' === $type ) {
 			$normalize = static fn( mixed $value ): string => trim( str_replace( array( "\r\n", "\r" ), "\n", (string) $value ) );
 			if ( $normalize( $stored ) === $normalize( $expected ) ) {

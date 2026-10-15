@@ -603,6 +603,12 @@
     layoutEditor.querySelectorAll('[data-media-field]').forEach(button => button.addEventListener('click', () => chooseFromMedia(button, layout, layoutFields[Number(button.dataset.mediaField)])));
     layoutEditor.oninput = event => {
       const input = event.target;
+      if (input.matches('[data-term-choice]')) {
+        const wrapper = input.closest('[data-taxonomy-field]');
+        const store = wrapper.querySelector('[data-field-index]');
+        const ids = Array.from(wrapper.querySelectorAll('[data-term-choice]:checked')).map(choice => Number(choice.value)).filter(Boolean);
+        store.value = JSON.stringify(ids);
+      }
       if (input.matches('[data-repeater-input]')) syncRepeaterValue(input);
       if (input.type === 'checkbox') input.closest('.pkca__layout-toggle')?.querySelector('span')?.replaceChildren(input.checked ? 'Ingeschakeld' : 'Uitgeschakeld');
       applyConditionalLogic();
@@ -663,6 +669,11 @@
     const conditions = encodeURIComponent(JSON.stringify(field.conditional_logic || []));
     const meta = `data-acf-key="${escapeHtml(field.key || '')}" data-conditions="${escapeHtml(conditions)}"`;
     const help = `${pending ? '<small class="pkca__field-pending">Aangepast · nog niet opgeslagen</small>' : ''}${field.instructions ? `<small class="pkca__layout-help">${escapeHtml(field.instructions)}</small>` : ''}`;
+    if (field.type === 'taxonomy') {
+      const ids = (Array.isArray(value) ? value : [value]).map(Number).filter(Boolean);
+      const serialized = JSON.stringify(ids);
+      return `<fieldset class="pkca__layout-field pkca__taxonomy" data-taxonomy-field ${meta}><legend>${escapeHtml(label)}</legend>${help}${Object.entries(field.choices || {}).map(([id, title]) => `<label><input type="${field.multiple ? 'checkbox' : 'radio'}" name="pkca-terms-${index}" data-term-choice value="${escapeHtml(id)}"${ids.includes(Number(id)) ? ' checked' : ''}><span>${escapeHtml(title)}</span></label>`).join('') || '<small>Geen opties beschikbaar.</small>'}${!field.multiple && !field.required ? `<label><input type="radio" name="pkca-terms-${index}" data-term-choice value="0"${!ids.length ? ' checked' : ''}><span>Geen selectie</span></label>` : ''}<textarea hidden data-field-index="${index}" data-original="${escapeHtml(serialized)}">${escapeHtml(serialized)}</textarea></fieldset>`;
+    }
     if (field.type === 'image') {
       const imageUrl = pending?.new_url || field.url || '';
       return `<div class="pkca__layout-field pkca__layout-field--image" ${meta}><span>${escapeHtml(label)}</span>${help}${imageUrl ? `<img class="pkca__layout-image-preview" src="${escapeHtml(imageUrl)}" alt="">` : '<span class="pkca__layout-image-empty">Geen afbeelding gekozen</span>'}<small>${escapeHtml(field.preview || 'Afbeelding')}</small><div class="pkca__media-actions"><label><input type="file" accept="image/*" data-field-index="${index}"><em>Uploaden</em></label><button type="button" data-media-field="${index}">Mediabibliotheek</button></div></div>`;
@@ -778,11 +789,11 @@
       }
       let value = input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
       if (value === input.dataset.original) continue;
-      if (field.type === 'repeater') {
+      if (field.type === 'repeater' || field.type === 'taxonomy') {
         try {
           value = JSON.parse(value || '[]');
         } catch (_) {
-          setLayoutStatus(`Repeater “${field.label}” bevat ongeldige gegevens. Herstel het veld en probeer opnieuw.`, 'error');
+          setLayoutStatus(`Veld “${field.label}” bevat ongeldige gegevens. Herstel het veld en probeer opnieuw.`, 'error');
           return;
         }
       }
@@ -812,6 +823,13 @@
       if (!input || draft.original !== input.dataset.original) return;
       if (input.type === 'checkbox') input.checked = draft.value === '1';
       else input.value = draft.value;
+      const taxonomy = input.closest('[data-taxonomy-field]');
+      if (taxonomy) {
+        try {
+          const ids = JSON.parse(draft.value).map(Number);
+          taxonomy.querySelectorAll('[data-term-choice]').forEach(choice => { choice.checked = Number(choice.value) ? ids.includes(Number(choice.value)) : !ids.length; });
+        } catch (_) {}
+      }
       const surface = input.closest('.pkca__wysiwyg')?.querySelector('[contenteditable]');
       if (surface) surface.innerHTML = draft.value;
       if (input.matches('[data-repeater-value]')) {
@@ -1554,6 +1572,10 @@
 
   function reviewValue(item, side, field) {
     const value = item[`${side}_value`];
+    if (item.type === 'taxonomy') {
+      const ids = (Array.isArray(value) ? value : [value]).filter(Boolean);
+      return ids.length ? `<div class="pkca__review-text">${escapeHtml(ids.map(id => field?.choices?.[String(id)] || `Keuze ${id}`).join(', '))}</div>` : '<span class="pkca__review-empty">Geen selectie</span>';
+    }
     if (item.type === 'image') {
       const url = item[`${side}_url`];
       return url ? `<img class="pkca__review-image" src="${escapeHtml(url)}" alt="${side === 'old' ? 'Huidige afbeelding' : 'Nieuwe afbeelding'}">` : '<span class="pkca__review-empty">Geen afbeelding</span>';

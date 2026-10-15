@@ -136,3 +136,5 @@ body:has(.pkca__layout-editor:not([hidden])) .pkca__layout-button{opacity:.35}
 .pkca__review-hint{margin:0;padding:12px 18px;color:#526071;background:#f8f9f6;font-size:12px;line-height:1.5}
 
 .pkca__pending-location{overflow-wrap:anywhere}.pkca__field-pending{display:block;width:fit-content;padding:3px 7px;border-radius:5px;background:#e5f8ec;color:#175537;font-size:11px;font-weight:600}
+
+.pkca__taxonomy{min-width:0;margin:0;padding:10px;border:1px solid #dce1db;border-radius:8px}.pkca__taxonomy legend{font-weight:600;font-size:12px}.pkca__taxonomy>label{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer}.pkca__taxonomy>label>input{width:16px;height:16px;min-height:0;margin:0;accent-color:#294cff}
