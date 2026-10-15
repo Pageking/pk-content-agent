@@ -14,6 +14,7 @@ final class PKCA_Plugin {
 	}
 
 	public function boot(): void {
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_global_navigation' ) );
 		add_action( 'admin_menu', array( $this, 'register_settings_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'rest_api_init', array( new PKCA_REST(), 'register_routes' ) );
@@ -22,6 +23,12 @@ final class PKCA_Plugin {
 		add_filter( 'acf/format_value/name=content_repeater', array( $this, 'apply_preview' ), 100, 3 );
 		add_filter( 'acf/load_value', array( $this, 'apply_sub_field_preview' ), 100, 3 );
 		add_filter( 'acf/format_value', array( $this, 'apply_archive_preview' ), 100, 3 );
+	}
+
+	public function enqueue_global_navigation(): void {
+		$screen = get_current_screen();
+		if ( ! $screen || ! str_contains( $screen->id, 'pk_global_blocks' ) ) return;
+		wp_enqueue_script( 'pkca-global-navigation', plugins_url( 'assets/global-navigation.js', PKCA_FILE ), array( 'acf-input' ), filemtime( PKCA_DIR . 'assets/global-navigation.js' ), true );
 	}
 
 	public function enqueue_frontend(): void {

@@ -10,7 +10,9 @@
   const historyKey = `pkca-history-${config.version || 'current'}-${config.postId}`;
   const positionKey = `pkca-position-${config.postId}`;
   const sizeKey = `pkca-size-${config.postId}`;
-  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, layoutNeedsRefresh: false, previewTargets: new Map() };
+  const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, layoutNeedsRefresh: false, previewTargets: new Map(), drafts: {}, busy: false, busyControls: new Map() };
+  const draftKey = `pkca-drafts-${config.postId}`;
+  try { state.drafts = JSON.parse(sessionStorage.getItem(draftKey) || '{}'); } catch (_) {}
   const root = document.createElement('div');
   root.className = 'pkca';
   root.innerHTML = `
@@ -82,11 +84,12 @@
     panel.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
     toggle.hidden = open;
-    if (open) loadContext();
+    if (open && !state.context) loadContext();
     syncLayoutButtons();
   }
 
   function closeAssistant() {
+    if (state.busy) return;
     closeLayoutEditor();
     clearSelection();
     if (state.collapsed) toggleCollapsed();
@@ -146,6 +149,14 @@
         ? (target.currentSrc || target.src || '')
         : selectableText(target);
 
+      const shared = getSectionEntries().find(entry => entry.element === section)?.context.shared;
+      if (shared) {
+        root.classList.remove('pkca--selecting');
+        toggle.textContent = 'Pagina aanpassen';
+        setOpen(true);
+        addMessage(`Dit onderdeel hoort bij het gedeelde blok “${shared.title}”. Wijzigingen aan dit bronblok gelden op alle pagina’s waar het gebruikt wordt. Gebruik de link “Gedeeld blok bewerken” op de pagina.`, 'agent');
+        return;
+      }
 	  const sectionNumber = Number(section.dataset.pkcaSectionNumber || 0);
 	  const sectionContext = state.context?.sections?.find(candidate => Number(candidate.number) === sectionNumber);
       const sameVisibleTargets = isImage
@@ -241,37 +252,36 @@
     topContexts.forEach(context => {
       const container = rowContainers[Number(context.row_index)];
       const candidates = container ? Array.from(container.children) : [];
-      const unused = new Set(candidates.filter(element => !usedElements.has(element)));
-      const element = findLayoutElement(context, candidates, unused);
-      if (!element) return;
-      usedElements.add(element);
-      entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+      const layouts = context.shared?.layouts || [context];
+      layouts.forEach(rendered => {
+        const unused = new Set(candidates.filter(element => !usedElements.has(element)));
+        const element = findLayoutElement(rendered, candidates, unused);
+        if (!element) return;
+        usedElements.add(element);
+        entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+      });
     });
     nestedContexts.forEach(context => {
       const parent = entries.find(entry => Number(entry.context.number) === Number(context.parent_section));
       if (!parent) return;
       const candidates = Array.from(parent.element.querySelectorAll('.flex-repeater > .flex-content > *'));
-      const unused = new Set(candidates.filter(element => !usedElements.has(element)));
-      const element = findLayoutElement(context, candidates, unused);
-      if (!element) return;
-      usedElements.add(element);
-      entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+      (context.shared?.layouts || [context]).forEach(rendered => {
+        const unused = new Set(candidates.filter(element => !usedElements.has(element)));
+        const element = findLayoutElement(rendered, candidates, unused);
+        if (!element) return;
+        usedElements.add(element);
+        entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+      });
     });
+
     entries.forEach(entry => { entry.element.dataset.pkcaSectionNumber = String(entry.context.number); });
     return entries;
   }
 
-	function findLayoutElement(context, candidates, unused) {
-	  const layout = String(context.layout || '').toLowerCase();
-	  const compactLayout = layout.replace(/[^a-z0-9]/g, '');
-	  const words = layout.split(/[_-]+/).filter(Boolean);
-	  return candidates.find(candidate => {
-		if (!unused.has(candidate)) return false;
-		const classes = Array.from(candidate.classList).join(' ').toLowerCase();
-		const compactClasses = classes.replace(/[^a-z0-9]/g, '');
-		return (compactLayout && compactClasses.includes(compactLayout)) || words.every(word => classes.includes(word));
-	  });
-	}
+  function findLayoutElement(context, candidates, unused) {
+    const classes = context.selectors || [`${context.layout}-layout`, context.layout];
+    return candidates.find(candidate => unused.has(candidate) && classes.some(name => candidate.classList.contains(name)));
+  }
 
 	function getSectionByNumber(sectionNumber) {
 	  return getSectionEntries().find(entry => Number(entry.context.number) === Number(sectionNumber))?.element || null;
@@ -311,15 +321,29 @@
 	entries.forEach((entry, index) => {
 	  const section = entry.element;
 	  const layout = entry.context;
-      const button = document.createElement('button');
-      button.type = 'button';
+      const shared = layout.shared;
+      const button = document.createElement(shared?.edit_url ? 'a' : 'button');
+      if (button.tagName === 'BUTTON') button.type = 'button';
       button.className = 'pkca__layout-button';
       button.setAttribute('aria-label', 'Layout bewerken');
       button.innerHTML = '<span aria-hidden="true">✎</span>';
-	  button.title = `${humanize(layout.layout)} bewerken`;
+      button.title = `${layout.label || humanize(layout.layout)} bewerken`;
+      if (shared) {
+        button.classList.add('pkca__shared-button');
+        button.setAttribute('aria-label', `Gedeeld blok bewerken: ${shared.title}`);
+        button.title = `${shared.title} · wijzigingen gelden overal waar dit blok gebruikt wordt`;
+        button.innerHTML = `<span aria-hidden="true">↗</span><span><strong>Gedeeld blok · ${escapeHtml(shared.title)}</strong><small>Bronblok bewerken · geldt op meerdere pagina’s</small></span>`;
+        if (shared.edit_url) {
+          button.href = shared.edit_url;
+          button.target = '_blank';
+          button.rel = 'noopener';
+        } else button.disabled = true;
+      }
       button.addEventListener('click', event => {
-        event.preventDefault();
         event.stopPropagation();
+        if (state.busy) { event.preventDefault(); return; }
+        if (shared) { captureLayoutDraft(); return; }
+        event.preventDefault();
 		state.layoutNeedsRefresh = false;
 		openLayoutEditor(entry.contextIndex);
       });
@@ -339,7 +363,7 @@
         return;
       }
       button.hidden = false;
-      button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - 42))}px`;
+      button.style.left = `${Math.max(8, Math.min(window.innerWidth - 42, rect.right - (button.offsetWidth || 32) - 10))}px`;
       button.style.top = `${Math.max(topInset, rect.top + 10)}px`;
     });
   }
@@ -500,8 +524,10 @@
   }
 
   function openLayoutEditor(index) {
+    if (state.busy) return;
     const layout = state.context?.sections?.[index];
     if (!layout) return;
+    captureLayoutDraft();
     state.activeLayout = index;
     setOpen(true);
     if (state.collapsed) toggleCollapsed();
@@ -509,36 +535,44 @@
     form.hidden = true;
     layoutEditor.hidden = false;
     const layoutFields = layout.fields || [];
-    layoutEditor.innerHTML = `<header class="pkca__layout-editor-header"><div><strong>Layout ${layout.number}</strong><small>${escapeHtml(humanize(layout.layout))}</small></div><button type="button" aria-label="Layout-editor sluiten">×</button></header>
+    layoutEditor.innerHTML = `<header class="pkca__layout-editor-header"><div><strong>Blok ${layout.number}</strong><small>${escapeHtml(layout.label || humanize(layout.layout))}</small></div><button type="button" aria-label="Layout-editor sluiten">×</button></header>
       <form class="pkca__layout-form"><div class="pkca__layout-fields">${layoutFieldsMarkup(layoutFields, layout.number)}</div>
         <div class="pkca__layout-status" role="status" aria-live="polite" hidden></div>
-        <button class="pkca__layout-save" type="submit">Wijzigingen klaarzetten</button></form>`;
+        <div class="pkca__layout-footer"><button class="pkca__layout-reset" type="button">Invoer verwerpen</button><button class="pkca__layout-save" type="submit">Voorbeeld bekijken</button></div></form>`;
     layoutEditor.querySelector('.pkca__layout-editor-header button').addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
       closeLayoutEditor();
     });
+    layoutEditor.querySelector('.pkca__layout-reset').addEventListener('click', () => {
+      clearLayoutDraft();
+      openLayoutEditor(index);
+    });
     layoutEditor.querySelector('.pkca__layout-form').addEventListener('submit', event => saveLayout(event, layout, layoutFields));
     layoutEditor.querySelectorAll('input[type=file]').forEach(input => input.addEventListener('change', () => uploadLayoutImage(input, layout, layoutFields[Number(input.dataset.fieldIndex)])));
     layoutEditor.querySelectorAll('[data-media-field]').forEach(button => button.addEventListener('click', () => chooseFromMedia(button, layout, layoutFields[Number(button.dataset.mediaField)])));
-    layoutEditor.addEventListener('input', event => {
+    layoutEditor.oninput = event => {
       const input = event.target;
       if (input.matches('[data-repeater-input]')) syncRepeaterValue(input);
       if (input.type === 'checkbox') input.closest('.pkca__layout-toggle')?.querySelector('span')?.replaceChildren(input.checked ? 'Ingeschakeld' : 'Uitgeschakeld');
       applyConditionalLogic();
-    });
+      captureLayoutDraft();
+    };
     initGalleryControls(layout, layoutFields);
-    layoutEditor.addEventListener('click', event => {
+    layoutEditor.onclick = event => {
       const button = event.target.closest('[data-repeater-action]');
-      if (button) updateRepeater(button, layoutFields[Number(button.dataset.fieldIndex)]);
-    });
+      if (button) { event.preventDefault(); updateRepeater(button, layoutFields[Number(button.dataset.fieldIndex)]); }
+    };
+    restoreLayoutDraft(layout.number);
     initWysiwygControls();
     applyConditionalLogic();
   }
 
   function layoutFieldsMarkup(fields, sectionNumber) {
     const rendered = new Set();
-    return fields.map((field, index) => {
+    const technical = new Set(['tag', 'variant', 'color', 'mode', 'layout_id', 'icon', 'icon_type', 'icon_name_library', 'icon_name_custom']);
+    const advanced = [];
+    const content = fields.map((field, index) => {
       if (rendered.has(index)) return '';
       if (field.type === 'repeater') {
         fields.forEach((candidate, candidateIndex) => {
@@ -550,17 +584,22 @@
         const textIndex = fields.findIndex(candidate => candidate.path.join('/') === path.replace(/\/tag$/, '/text'));
         if (textIndex >= 0) {
           rendered.add(textIndex);
-          return `<div class="pkca__heading-row">${layoutField(field, index, sectionNumber)}${layoutField(fields[textIndex], textIndex, sectionNumber)}</div>`;
+          advanced.push(layoutField(field, index, sectionNumber));
+          return layoutField(fields[textIndex], textIndex, sectionNumber);
         }
       }
-      return layoutField(field, index, sectionNumber);
+      const markup = layoutField(field, index, sectionNumber);
+      if (technical.has(field.name)) { advanced.push(markup); return ''; }
+      return markup;
     }).join('');
+    return content + (advanced.length ? `<details class="pkca__advanced"><summary>Meer opties</summary><div>${advanced.join('')}</div></details>` : '');
   }
 
   function layoutField(field, index, sectionNumber) {
     const pending = (state.context?.changes || []).find(change => Number(change.section) === sectionNumber && (change.field_path || []).join('.') === field.path.join('.'));
     const value = pending ? pending.new_value : field.value;
-    const label = field.label || humanize(field.path.filter(part => !/^\d+$/.test(part)).slice(-2).join(' · '));
+    const rawLabel = field.label || humanize(field.path.filter(part => !/^\d+$/.test(part)).slice(-2).join(' · '));
+    const label = friendlyLabel(rawLabel);
     const conditions = encodeURIComponent(JSON.stringify(field.conditional_logic || []));
     const meta = `data-acf-key="${escapeHtml(field.key || '')}" data-conditions="${escapeHtml(conditions)}"`;
     const help = field.instructions ? `<small class="pkca__layout-help">${escapeHtml(field.instructions)}</small>` : '';
@@ -668,13 +707,9 @@
     });
   }
 
-  async function saveLayout(event, layout, fields) {
-    event.preventDefault();
-    const submit = event.currentTarget.querySelector('.pkca__layout-save');
-    if (submit.disabled) return;
-    setLayoutStatus('Wijzigingen controleren…', 'loading');
+  function collectLayoutEdits(layout, fields) {
     const edits = [];
-    const controls = event.currentTarget.querySelectorAll('input[data-field-index]:not([type=file]),select[data-field-index],textarea[data-field-index]');
+    const controls = layoutEditor.querySelectorAll('input[data-field-index]:not([type=file]),select[data-field-index],textarea[data-field-index]');
     for (const input of controls) {
       const field = fields[Number(input.dataset.fieldIndex)];
       if (!field) {
@@ -693,6 +728,64 @@
       }
       edits.push({ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value, refresh: field.acf_type === 'wysiwyg' });
     }
+    return edits;
+  }
+
+  function captureLayoutDraft() {
+    if (state.activeLayout === null || layoutEditor.hidden) return;
+    const layout = state.context?.sections?.[state.activeLayout];
+    if (!layout) return;
+    const values = {};
+    layoutEditor.querySelectorAll('[data-field-index][data-original]').forEach(input => {
+      const value = input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
+      if (value !== input.dataset.original) values[input.dataset.fieldIndex] = { value, original: input.dataset.original };
+    });
+    if (Object.keys(values).length) state.drafts[layout.number] = values;
+    else delete state.drafts[layout.number];
+    try { sessionStorage.setItem(draftKey, JSON.stringify(state.drafts)); } catch (_) {}
+  }
+
+  function restoreLayoutDraft(number) {
+    let restored = false;
+    Object.entries(state.drafts[number] || {}).forEach(([index, draft]) => {
+      const input = layoutEditor.querySelector(`[data-field-index="${index}"][data-original]`);
+      if (!input || draft.original !== input.dataset.original) return;
+      if (input.type === 'checkbox') input.checked = draft.value === '1';
+      else input.value = draft.value;
+      const surface = input.closest('.pkca__wysiwyg')?.querySelector('[contenteditable]');
+      if (surface) surface.innerHTML = draft.value;
+      if (input.matches('[data-repeater-value]')) {
+        const field = state.context.sections[state.activeLayout].fields[Number(index)];
+        try {
+          const rows = JSON.parse(draft.value);
+          const wrapper = input.closest('[data-repeater-field]');
+          wrapper.querySelector('.pkca__repeater-rows').innerHTML = repeaterRowsMarkup(field, Number(index), rows);
+          updateRepeaterLimits(wrapper, field, rows);
+        } catch (_) {}
+      }
+      restored = true;
+    });
+    if (restored) setLayoutStatus('Je eerdere invoer is bewaard. Bekijk het voorbeeld om de wijzigingen te controleren.', 'info');
+  }
+
+  function clearLayoutDraft() {
+    const layout = state.context?.sections?.[state.activeLayout];
+    if (layout) delete state.drafts[layout.number];
+    layoutEditor.querySelectorAll('[data-field-index][data-original]').forEach(input => {
+      input.dataset.original = input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
+    });
+    try { sessionStorage.setItem(draftKey, JSON.stringify(state.drafts)); } catch (_) {}
+  }
+
+  window.addEventListener('beforeunload', captureLayoutDraft);
+
+  async function saveLayout(event, layout, fields) {
+    event.preventDefault();
+    const submit = event.currentTarget.querySelector('.pkca__layout-save');
+    if (submit.disabled) return;
+    setLayoutStatus('Wijzigingen controleren…', 'loading');
+    const edits = collectLayoutEdits(layout, fields);
+    if (!edits) return;
     if (!edits.length) {
       setLayoutStatus('Er zijn geen velden gewijzigd in deze layout.', 'info');
       return;
@@ -705,7 +798,8 @@
 
   async function uploadLayoutImage(input, layout, field) {
     if (!input.files?.[0]) return;
-    input.disabled = true;
+    setBusy(true);
+    setLayoutStatus('Afbeelding uploaden…', 'loading');
     try {
       const uploadedIds = [];
       for (const file of Array.from(input.files)) {
@@ -720,7 +814,9 @@
       await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value: field.type === 'gallery' ? [...currentIds, ...uploadedIds] : uploadedIds[0] }], `${uploadedIds.length} afbeelding${uploadedIds.length === 1 ? '' : 'en'} in layout ${layout.number} aangepast.`, { keepEditor: field.type === 'gallery' });
     } catch (error) {
       addMessage(error.message, 'error');
-      input.disabled = false;
+      setLayoutStatus(error.message, 'error');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -783,11 +879,15 @@
     }
     value.value = JSON.stringify(rows);
     wrapper.querySelector('.pkca__repeater-rows').innerHTML = repeaterRowsMarkup(field, Number(button.dataset.fieldIndex), rows);
+    updateRepeaterLimits(wrapper, field, rows);
+    value.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function updateRepeaterLimits(wrapper, field, rows) {
     const addButton = wrapper.querySelector('[data-repeater-action="add"]');
     const atMaximum = Number(field.max || 0) > 0 && rows.length >= Number(field.max);
     addButton.disabled = atMaximum;
     addButton.textContent = atMaximum ? `Maximum van ${field.max} rijen bereikt` : 'Rij toevoegen';
-    value.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   function repeaterRowsMarkup(field, fieldIndex, rows) {
@@ -800,7 +900,7 @@
     const path = field.path || [];
     const value = valueAtPath(row, path);
     const attrs = `data-repeater-input data-row="${rowIndex}" data-repeater-path="${escapeHtml(path.join('.'))}"`;
-    const label = escapeHtml(field.label || humanize(path[path.length - 1] || 'Veld'));
+    const label = escapeHtml(friendlyLabel(field.label || humanize(path[path.length - 1] || 'Veld')));
     if (field.type === 'boolean') {
       const checked = value === true || value === 1 || value === '1';
       return `<label><span>${label}</span><span class="pkca__layout-toggle"><input type="checkbox" ${attrs}${checked ? ' checked' : ''}><span>${checked ? 'Ingeschakeld' : 'Uitgeschakeld'}</span></span></label>`;
@@ -920,19 +1020,29 @@
   }
 
   async function queueLayoutChanges(edits, confirmation, { keepEditor = false } = {}) {
+    const editorIndex = state.activeLayout;
+    const layout = state.context?.sections?.[editorIndex];
+    if (layout && edits.every(edit => Number(edit.section) === Number(layout.number))) {
+      const draftEdits = collectLayoutEdits(layout, layout.fields || []);
+      if (!draftEdits) return;
+      const merged = new Map(draftEdits.map(edit => [`${edit.section}:${edit.field_path.join('.')}`, edit]));
+      edits.forEach(edit => merged.set(`${edit.section}:${edit.field_path.join('.')}`, edit));
+      edits = [...merged.values()];
+    }
     setBusy(true);
     try {
       const data = await request('change', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ post_id: config.postId, changes: edits }) });
+      if (state.activeLayout === editorIndex) clearLayoutDraft();
       state.context.changes = data.changes || [];
       syncContextWithChanges(state.context.changes);
       applyPreview(state.context.changes);
       renderChanges(state.context.changes);
       addMessage(data.queued === 0 && data.unchanged > 0 ? 'Deze wijziging stond al klaar; de pagina-preview is opnieuw gesynchroniseerd.' : confirmation, 'agent');
       const requiresRefresh = state.layoutNeedsRefresh || edits.some(edit => edit.refresh || !['text', 'link', 'image'].includes(edit.type));
-      if (keepEditor) {
+      if (keepEditor && state.activeLayout === editorIndex) {
         state.layoutNeedsRefresh ||= requiresRefresh;
         refreshOpenLayoutEditor(confirmation, edits);
-      } else {
+      } else if (state.activeLayout === editorIndex) {
         closeLayoutEditor(false);
       }
       if (requiresRefresh && !keepEditor) {
@@ -947,7 +1057,7 @@
       const submit = layoutEditor.querySelector('.pkca__layout-save');
       if (submit) {
         submit.disabled = false;
-        submit.textContent = 'Wijzigingen klaarzetten';
+        submit.textContent = 'Voorbeeld bekijken';
       }
     }
   }
@@ -996,6 +1106,8 @@
   }
 
   function closeLayoutEditor(reloadDeferred = true) {
+    if (state.busy && reloadDeferred) return;
+    captureLayoutDraft();
     const needsRefresh = state.layoutNeedsRefresh;
     state.activeLayout = null;
     state.layoutNeedsRefresh = false;
@@ -1007,6 +1119,11 @@
       sessionStorage.setItem('pkca-preview-resume', String(config.postId));
       window.location.reload();
     }
+  }
+
+  function friendlyLabel(value) {
+    const labels = { 'heading text': 'Titel', 'tag': 'Kopniveau', 'modus': 'Weergave', 'mode': 'Weergave', 'text': 'Tekst', 'buttons': 'Knoppen', 'layout id': 'Anker ID' };
+    return labels[String(value).toLowerCase()] || String(value).replace(/^Text( \d+)?$/i, 'Tekst$1').replace(/^Button\b/i, 'Knop');
   }
 
   function humanize(value) {
@@ -1328,6 +1445,7 @@
         selection.hidden = false;
       }
     } catch (error) {
+      textarea.value = originalMessage;
       addMessage(error.message, 'error');
     } finally {
       setBusy(false);
@@ -1348,8 +1466,8 @@
     }
     changes.hidden = false;
     changes.innerHTML = `<details class="pkca__change-details"><summary><strong><i aria-hidden="true"></i>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} klaar</strong><span>Bekijken</span></summary><div class="pkca__change-list">${items.map(item => `
-      <div class="pkca__change"><span>Sectie ${item.section} · ${escapeHtml(item.field_name)}</span><del>${escapeHtml(changeValueSummary(item.old_value, item.type))}</del><ins>${escapeHtml(changeValueSummary(item.new_value, item.type))}</ins><button type="button" class="pkca__change-discard" data-change-id="${escapeHtml(item.id || '')}">Deze wijziging ongedaan maken</button></div>`).join('')}</div></details>
-      <div class="pkca__actions"><button type="button" data-action="discard">Alles ongedaan</button><button type="button" data-action="publish">Alles opslaan</button></div>`;
+      <div class="pkca__change"><span>Sectie ${item.section} · ${escapeHtml(friendlyLabel(state.context?.sections?.find(section => Number(section.number) === Number(item.section))?.fields?.find(field => field.path.join('.') === item.field_path.join('.'))?.label || item.field_name))}</span><del>${escapeHtml(changeValueSummary(item.old_value, item.type))}</del><ins>${escapeHtml(changeValueSummary(item.new_value, item.type))}</ins><button type="button" class="pkca__change-discard" data-change-id="${escapeHtml(item.id || '')}">Deze wijziging verwerpen</button></div>`).join('')}</div></details>
+      <div class="pkca__actions"><button type="button" data-action="discard">Wijzigingen verwerpen</button><button type="button" data-action="publish">Wijzigingen opslaan</button></div>`;
     changes.querySelector('[data-action=publish]').addEventListener('click', () => finish('publish'));
     changes.querySelector('[data-action=discard]').addEventListener('click', () => finish('discard'));
 	changes.querySelectorAll('[data-change-id]').forEach(button => button.addEventListener('click', () => discardChange(button.dataset.changeId)));
@@ -1521,11 +1639,24 @@
   }
 
   function setBusy(busy) {
-    form.querySelector('.pkca__send').disabled = busy;
-    textarea.disabled = busy;
-    layoutEditor.querySelectorAll('[data-gallery-remove],[data-media-field],.pkca__layout-field--gallery input[type=file]').forEach(control => {
-      control.disabled = busy;
-    });
+    if (busy === state.busy) return;
+    state.busy = busy;
+    if (busy) {
+      layoutEditor.setAttribute('aria-busy', 'true');
+      const controls = [...form.querySelectorAll('button, input, textarea'), ...layoutEditor.querySelectorAll('button, input, select, textarea, [contenteditable]')];
+      controls.forEach(control => {
+        state.busyControls.set(control, { disabled: control.disabled, editable: control.getAttribute('contenteditable') });
+        if (control.hasAttribute('contenteditable')) control.setAttribute('contenteditable', 'false');
+        else control.disabled = true;
+      });
+    } else {
+      layoutEditor.removeAttribute('aria-busy');
+      state.busyControls.forEach((previous, control) => {
+        if (previous.editable !== null) control.setAttribute('contenteditable', previous.editable);
+        else control.disabled = previous.disabled;
+      });
+      state.busyControls.clear();
+    }
   }
 
   function escapeHtml(value) {

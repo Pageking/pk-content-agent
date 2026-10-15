@@ -23,38 +23,26 @@ final class PKCA_REST {
 		if ( ! is_array( $items ) || array() === $items ) {
 			return new WP_Error( 'pkca_changes_missing', 'Er zijn geen velden gewijzigd.', array( 'status' => 400 ) );
 		}
-		$queued = array();
-		$unchanged = 0;
-		foreach ( array_slice( $items, 0, 50 ) as $item ) {
-			if ( ! is_array( $item ) ) {
-				continue;
-			}
+		$prepared = array();
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) return new WP_Error( 'pkca_invalid_change', 'Een van de wijzigingen is ongeldig.', array( 'status' => 422 ) );
 			$type = sanitize_key( (string) ( $item['type'] ?? '' ) );
 			if ( ! in_array( $type, array( 'text', 'link', 'image', 'gallery', 'repeater', 'number', 'boolean', 'option', 'email', 'color' ), true ) ) {
 				return new WP_Error( 'pkca_change_type', 'Dit veldtype kan niet veilig worden bewerkt.', array( 'status' => 422 ) );
 			}
-			$result = PKCA_Content::add_change(
-				$post_id,
-				array(
-					'section'    => absint( $item['section'] ?? 0 ),
-					'field_path' => is_array( $item['field_path'] ?? null ) ? array_map( 'sanitize_key', $item['field_path'] ) : array(),
-					'field_name' => sanitize_key( (string) ( $item['field_name'] ?? '' ) ),
-					'type'       => $type,
-					'value'      => $item['value'] ?? '',
-					'operation'  => 'set',
-				)
+			$prepared[] = array(
+				'section' => absint( $item['section'] ?? 0 ),
+				'field_path' => is_array( $item['field_path'] ?? null ) ? array_map( 'sanitize_key', $item['field_path'] ) : array(),
+				'field_name' => sanitize_key( (string) ( $item['field_name'] ?? '' ) ),
+				'type' => $type,
+				'value' => $item['value'] ?? '',
+				'operation' => 'set',
 			);
-			if ( is_wp_error( $result ) ) {
-				if ( 'pkca_no_change' === $result->get_error_code() ) {
-					$unchanged++;
-					continue;
-				}
-				return $result;
-			}
-			$queued[] = $result;
 		}
+		$result = PKCA_Content::add_changes( $post_id, $prepared );
+		if ( is_wp_error( $result ) ) return $result;
 		$context = PKCA_Content::inspect( $post_id );
-		return is_wp_error( $context ) ? $context : rest_ensure_response( array( 'queued' => count( $queued ), 'unchanged' => $unchanged, 'changes' => $context['changes'] ) );
+		return is_wp_error( $context ) ? $context : rest_ensure_response( array_merge( $result, array( 'changes' => $context['changes'] ) ) );
 	}
 
 	public function can_edit( WP_REST_Request $request ): bool|WP_Error {
@@ -834,6 +822,7 @@ final class PKCA_REST {
 	}
 
 	public function upload( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		if ( ! current_user_can( 'upload_files' ) ) return new WP_Error( 'pkca_upload_forbidden', 'Je hebt geen rechten om afbeeldingen te uploaden.', array( 'status' => 403 ) );
 		if ( empty( $_FILES['file'] ) ) {
 			return new WP_Error( 'pkca_upload_missing', 'Selecteer eerst een afbeelding.', array( 'status' => 400 ) );
 		}

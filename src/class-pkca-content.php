@@ -5,6 +5,8 @@ defined( 'ABSPATH' ) || exit;
 final class PKCA_Content {
 	private const TRANSIENT_PREFIX = 'pkca_changes_';
 	private static bool $suppress_preview = false;
+	private static ?array $staged_changes = null;
+	private static array $layout_titles = array();
 
 	public static function preview_is_suppressed(): bool {
 		return self::$suppress_preview;
@@ -45,6 +47,8 @@ final class PKCA_Content {
 		}
 		unset( $section );
 
+		$sections = self::describe_sections( $sections, $rows );
+
 		return array(
 			'post'     => array(
 				'id'        => $target['key'],
@@ -57,6 +61,47 @@ final class PKCA_Content {
 			'link_targets' => self::link_targets(),
 			'changes'  => array_map( array( self::class, 'decorate_change' ), $pending_changes ),
 		);
+	}
+
+	private static function describe_sections( array $sections, array $rows ): array {
+		$globals = null;
+		foreach ( $sections as &$section ) {
+			$section['selectors'] = self::layout_selectors( $section['layout'] );
+			$section['label'] = self::$layout_titles[ $section['layout'] ] ?? ucwords( str_replace( array( '_', '-' ), ' ', $section['layout'] ) );
+			if ( 'global_blocks' !== $section['layout'] ) continue;
+			$source_layout = $rows[ $section['row_index'] ]['flex_content'][ $section['layout_index'] ] ?? array();
+			if ( ! empty( $section['nested_path'] ) ) $source_layout = self::get_nested_value( $source_layout, $section['nested_path'] );
+			$selected = (string) ( $source_layout['global_block_select'] ?? '' );
+			$globals ??= (array) get_field( 'global_content_repeater', 'option' );
+			foreach ( $globals as $global ) {
+				if ( $selected !== (string) ( $global['global_block_id'] ?? '' ) ) continue;
+				$section['shared'] = array(
+					'id' => $selected,
+					'title' => (string) ( $global['global_block_title'] ?? 'Gedeeld blok' ),
+					'edit_url' => current_user_can( 'edit_posts' ) ? wp_make_link_relative( admin_url( 'admin.php?page=pk_global_blocks' ) ) . '#pkca-global-' . rawurlencode( $selected ) : '',
+					'layouts' => array_map( static fn( array $layout ): array => array( 'layout' => (string) ( $layout['acf_fc_layout'] ?? '' ), 'selectors' => self::layout_selectors( (string) ( $layout['acf_fc_layout'] ?? '' ) ) ), (array) ( $global['flex_content'] ?? array() ) ),
+				);
+				break;
+			}
+			$section['fields'] = array();
+		}
+		unset( $section );
+		return $sections;
+	}
+
+	private static function layout_selectors( string $layout ): array {
+		static $cache = array();
+		if ( isset( $cache[ $layout ] ) ) return $cache[ $layout ];
+		$selectors = array( $layout . '-layout', $layout );
+		if ( preg_match( '/^[a-zA-Z0-9_-]+$/', $layout ) ) {
+			foreach ( array( 'content', 'sidebar' ) as $group ) {
+				$file = get_stylesheet_directory() . '/flex/' . $group . '/layouts/' . $layout . '/frontend.php';
+				if ( ! is_readable( $file ) ) continue;
+				$template = file_get_contents( $file );
+				if ( preg_match( '/class=["\']flex-layout\s+([a-zA-Z0-9_-]+)/', $template, $match ) ) $selectors[] = $match[1];
+			}
+		}
+		return $cache[ $layout ] = array_values( array_unique( (array) apply_filters( 'pkca_layout_classes', $selectors, $layout ) ) );
 	}
 
 	private static function build_sections( array $rows, array $layout_schemas ): array {
@@ -144,6 +189,7 @@ final class PKCA_Content {
 				$layouts = array();
 				foreach ( (array) ( $definition['layouts'] ?? array() ) as $layout_definition ) {
 					$layouts[ (string) ( $layout_definition['name'] ?? '' ) ] = (array) ( $layout_definition['sub_fields'] ?? array() );
+					self::$layout_titles[ (string) ( $layout_definition['name'] ?? '' ) ] = (string) ( $layout_definition['label'] ?? $layout_definition['name'] ?? '' );
 				}
 				foreach ( $value as $nested_index => $nested_layout ) {
 					if ( ! is_array( $nested_layout ) ) {
@@ -199,6 +245,7 @@ final class PKCA_Content {
 			}
 			foreach ( (array) ( $sub_field['layouts'] ?? array() ) as $layout ) {
 				$schemas[ (string) ( $layout['name'] ?? '' ) ] = (array) ( $layout['sub_fields'] ?? array() );
+				self::$layout_titles[ (string) ( $layout['name'] ?? '' ) ] = (string) ( $layout['label'] ?? $layout['name'] ?? '' );
 			}
 		}
 		return $schemas;
@@ -579,6 +626,30 @@ final class PKCA_Content {
 		return is_scalar( $value ) || null === $value ? (string) $value : '';
 	}
 
+	public static function add_changes( int|string $post_id, array $items ): array|WP_Error {
+		if ( count( $items ) > 50 ) return new WP_Error( 'pkca_batch_limit', 'Pas maximaal 50 velden tegelijk aan.', array( 'status' => 422 ) );
+		self::$staged_changes = self::get_changes( $post_id );
+		$queued = 0;
+		$unchanged = 0;
+		try {
+			foreach ( $items as $item ) {
+				if ( ! is_array( $item ) ) return new WP_Error( 'pkca_invalid_change', 'Een van de wijzigingen is ongeldig.', array( 'status' => 422 ) );
+				$result = self::add_change( $post_id, $item );
+				if ( is_wp_error( $result ) ) {
+					if ( 'pkca_no_change' !== $result->get_error_code() ) return $result;
+					$unchanged++;
+				} else {
+					$queued++;
+				}
+			}
+			$changes = self::$staged_changes;
+		} finally {
+			self::$staged_changes = null;
+		}
+		self::save_changes( $post_id, $changes );
+		return array( 'queued' => $queued, 'unchanged' => $unchanged );
+	}
+
 	public static function add_change( int|string $post_id, array $change ): array|WP_Error {
 		$inspection = self::inspect( $post_id );
 		if ( is_wp_error( $inspection ) ) {
@@ -594,6 +665,9 @@ final class PKCA_Content {
 		}
 
 		$changes = self::get_changes( $post_id );
+		if ( $changes && ( $changes[0]['base_modified'] ?? '' ) !== $inspection['post']['modified'] ) {
+			return new WP_Error( 'pkca_edit_conflict', 'De broncontent is ondertussen gewijzigd. Verwerp het voorbeeld en laad de pagina opnieuw voordat je verdergaat.', array( 'status' => 409 ) );
+		}
 		$current_value = $target['field']['value'];
 		foreach ( $changes as $existing ) {
 			if ( $existing['row_index'] === $target['row_index'] && $existing['layout_index'] === $target['layout_index'] && $existing['field_path'] === $target['field']['path'] ) {
@@ -648,7 +722,7 @@ final class PKCA_Content {
 			if ( '' === $search ) {
 				return new WP_Error( 'pkca_replace_missing', 'Ik weet niet welk deel van de tekst vervangen moet worden.', array( 'status' => 422 ) );
 			}
-			$new_value = preg_replace( '/' . preg_quote( $search, '/' ) . '/iu', $replacement, (string) $current_value, 1, $replace_count );
+			$new_value = preg_replace_callback( '/' . preg_quote( $search, '/' ) . '/iu', static fn(): string => $replacement, (string) $current_value, 1, $replace_count );
 			if ( 0 === $replace_count ) {
 				return new WP_Error( 'pkca_replace_not_found', 'Ik kan dat woord of tekstdeel niet in het aangewezen veld vinden.', array( 'status' => 422 ) );
 			}
@@ -676,6 +750,7 @@ final class PKCA_Content {
 		foreach ( $changes as $index => $existing ) {
 			if ( $existing['row_index'] === $new_change['row_index'] && $existing['layout_index'] === $new_change['layout_index'] && $existing['field_path'] === $new_change['field_path'] ) {
 				$new_change['old_value'] = $existing['old_value'];
+				$new_change['base_modified'] = $existing['base_modified'];
 				$changes[ $index ] = $new_change;
 				self::save_changes( $post_id, $changes );
 				return $new_change;
@@ -700,7 +775,8 @@ final class PKCA_Content {
 			if ( $site_host && $url_host && in_array( $url_host, array( $site_host, 'localhost' ), true ) ) {
 				$path = wp_parse_url( $url, PHP_URL_PATH ) ?: '/';
 				$query = wp_parse_url( $url, PHP_URL_QUERY );
-				return $path . ( $query ? '?' . $query : '' );
+				$fragment = wp_parse_url( $url, PHP_URL_FRAGMENT );
+				return $path . ( $query ? '?' . $query : '' ) . ( null !== $fragment ? '#' . $fragment : '' );
 			}
 			return esc_url_raw( $url, array( 'http', 'https' ) );
 		}
@@ -1002,11 +1078,16 @@ final class PKCA_Content {
 	}
 
 	public static function get_changes( int|string $post_id ): array {
+		if ( null !== self::$staged_changes ) return self::$staged_changes;
 		$value = get_transient( self::transient_key( $post_id ) );
 		return is_array( $value ) ? $value : array();
 	}
 
 	private static function save_changes( int|string $post_id, array $changes ): void {
+		if ( null !== self::$staged_changes ) {
+			self::$staged_changes = $changes;
+			return;
+		}
 		set_transient( self::transient_key( $post_id ), $changes, 2 * HOUR_IN_SECONDS );
 	}
 
@@ -1030,6 +1111,6 @@ final class PKCA_Content {
 	}
 
 	private static function target_version( array $target, array $rows ): string {
-		return 'post' === $target['type'] ? (string) get_post_modified_time( 'c', true, (int) $target['acf_id'] ) : hash( 'sha256', wp_json_encode( $rows ) ?: '' );
+		return hash( 'sha256', ( 'post' === $target['type'] ? (string) get_post_modified_time( 'c', true, (int) $target['acf_id'] ) : '' ) . ( wp_json_encode( $rows ) ?: '' ) );
 	}
 }

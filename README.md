@@ -22,7 +22,11 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 ## Functionaliteit
 
 - Inventariseert alle rijen van `content_repeater → flex_content` zonder layouts hard te coderen.
-- Koppelt layoutpotloodjes en previews aan de juiste ACF-rij; geneste layouts blijven bij hun bovenliggende layout.
+- Koppelt bewerkknoppen aan de juiste ACF-rij met exacte layoutklassen; afwijkende klassennamen worden uit het layouttemplate gelezen. De filter `pkca_layout_classes` kan aanvullende klassennamen leveren.
+- Toont globale blokken als gedeelde content, met titel, uitleg over doorwerking en een directe link die het bronblok in WordPress uitlicht.
+- Bewaart niet-verwerkte invoer per pagina in de browsertab, ook bij sluiten of herladen. **Invoer verwerpen** herstelt de velden naar de actuele preview.
+- Houdt tekstinvoer vast bij mediawijzigingen en voorkomt dubbele rijacties bij herhaald openen.
+- Zet een batch velden als geheel klaar en blokkeert overschrijven als de broncontent ondertussen verandert.
 - Bewerkiconen houden hun toegankelijke naam zonder zichtbare labeltekst naast het icoon.
 - Ondersteunt ook post-typearchieven waarvan de automatische optionspagina het veld `{post_type}_content_repeater` bevat, zoals `location_content_repeater`.
 - Gebruikt een vaste bedrijfsbriefing voor doelgroep, diensten, positionering, tone of voice, terminologie en controleerbare claims.
@@ -48,3 +52,13 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Layouts toevoegen, verwijderen of verplaatsen wordt niet ondersteund.
 - Dynamische relaties worden in de pagina-inventaris zichtbaar, maar vrije querylogica in templates wordt nog niet volledig geanalyseerd.
 - Een lokale WordPress-database en API-key zijn nodig voor een end-to-end test.
+
+## Lokale regressiecontrole
+
+Voer vanuit de WordPress-root uit op een lokale testsite met ACF en een gevulde bronpagina:
+
+```sh
+wp eval-file wp-content/plugins/pk-content-agent-main/tests/content-regressions.php <bronpagina-id>
+```
+
+De controle maakt een tijdelijke conceptpagina, test batches, publiceren, conflicten, links en gedeelde bronverwijzingen, en verwijdert de testpagina na afloop. Op Local moet wp-cli het juiste sitesocket gebruiken.
