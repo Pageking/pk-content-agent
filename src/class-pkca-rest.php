@@ -4,12 +4,12 @@ defined( 'ABSPATH' ) || exit;
 
 final class PKCA_REST {
 	public function register_routes(): void {
-		foreach ( array( 'context', 'chat', 'change', 'upload', 'publish', 'discard' ) as $route ) {
+		foreach ( array( 'context', 'media', 'chat', 'change', 'upload', 'publish', 'discard' ) as $route ) {
 			register_rest_route(
 				'pk-content-agent/v1',
 				'/' . $route,
 				array(
-					'methods'             => 'upload' === $route ? WP_REST_Server::CREATABLE : ( 'context' === $route ? WP_REST_Server::READABLE : WP_REST_Server::CREATABLE ),
+					'methods'             => in_array( $route, array( 'context', 'media' ), true ) ? WP_REST_Server::READABLE : WP_REST_Server::CREATABLE,
 					'callback'            => array( $this, $route ),
 					'permission_callback' => array( $this, 'can_edit' ),
 				)
@@ -840,6 +840,19 @@ final class PKCA_REST {
 			return new WP_Error( 'pkca_upload_type', 'Alleen afbeeldingen zijn toegestaan.', array( 'status' => 415 ) );
 		}
 		return rest_ensure_response( array( 'id' => $id, 'url' => wp_get_attachment_image_url( $id, 'medium' ), 'title' => get_the_title( $id ) ) );
+	}
+
+	public function media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		if ( ! current_user_can( 'upload_files' ) ) return new WP_Error( 'pkca_media_forbidden', 'Je hebt geen toegang tot de mediabibliotheek.', array( 'status' => 403 ) );
+		$page = max( 1, absint( $request->get_param( 'page' ) ?? 1 ) );
+		$query = new WP_Query( array( 'post_type' => 'attachment', 'post_status' => 'inherit', 'post_mime_type' => 'image', 'posts_per_page' => 24, 'paged' => $page, 's' => sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) ), 'orderby' => 'ID', 'order' => 'DESC' ) );
+		$items = array();
+		foreach ( $query->posts as $attachment ) {
+			$thumbnail = wp_get_attachment_image_url( $attachment->ID, 'thumbnail' );
+			if ( ! $thumbnail ) continue;
+			$items[] = array( 'id' => $attachment->ID, 'url' => $thumbnail, 'title' => html_entity_decode( wp_strip_all_tags( $attachment->post_title ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
+		}
+		return rest_ensure_response( array( 'items' => $items, 'page' => $page, 'pages' => (int) $query->max_num_pages, 'total' => (int) $query->found_posts ) );
 	}
 
 	public function publish( WP_REST_Request $request ): WP_REST_Response|WP_Error {

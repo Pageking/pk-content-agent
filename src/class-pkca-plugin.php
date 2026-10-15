@@ -55,7 +55,6 @@ final class PKCA_Plugin {
 		}
 
 		wp_enqueue_style( 'pk-content-agent', plugins_url( 'assets/agent.css', PKCA_FILE ), array(), filemtime( PKCA_DIR . 'assets/agent.css' ) );
-		wp_enqueue_media();
 		wp_enqueue_script( 'pk-content-agent', plugins_url( 'assets/agent.js', PKCA_FILE ), array(), filemtime( PKCA_DIR . 'assets/agent.js' ), true );
 		wp_add_inline_script(
 			'pk-content-agent',

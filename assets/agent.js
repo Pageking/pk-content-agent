@@ -1050,57 +1050,102 @@
   }
 
   function chooseFromMedia(button, layout, field) {
-    if (!window.wp?.media) {
-      addMessage('De WordPress-mediabibliotheek kon niet worden geopend.', 'error');
-      return;
-    }
+    if (state.busy) return;
+    captureLayoutDraft();
     const gallery = field.type === 'gallery';
-    const frame = wp.media({ title: gallery ? 'Afbeeldingen toevoegen' : 'Afbeelding kiezen', library: { type: 'image' }, multiple: gallery ? 'add' : false, button: { text: gallery ? 'Toevoegen aan galerij' : 'Gebruiken' } });
-    let frameDisposed = false;
-    let mediaModal = null;
-    let mediaBackdrop = null;
-    const disposeMediaFrame = () => {
-      if (frameDisposed) return;
-      frameDisposed = true;
-      root.classList.remove('pkca--media-open');
-      try { frame.close(); } catch (_) {}
-      try { frame.modal?.close(); } catch (_) {}
-      try { frame.modal?.remove(); } catch (_) {}
-      try { frame.remove(); } catch (_) {}
-      // WordPress may leave the modal shell mounted after an upload followed by
-      // "Toevoegen aan galerij". Remove only the elements captured for this
-      // frame, so another media dialog on the page is never affected.
-      mediaModal?.remove();
-      mediaBackdrop?.remove();
-      if (!document.querySelector('.media-modal')) document.body.classList.remove('modal-open');
+    const editorIndex = state.activeLayout;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'pkca__media';
+    dialog.setAttribute('aria-labelledby', 'pkca-media-title');
+    dialog.innerHTML = `<header><h2 id="pkca-media-title">${gallery ? 'Afbeeldingen toevoegen' : 'Afbeelding kiezen'}</h2><button type="button" data-media-close aria-label="Mediabibliotheek sluiten">×</button></header>
+      <div class="pkca__media-tools"><label>Zoek een afbeelding<input type="search" placeholder="Zoeken op naam…" data-media-search></label><label class="pkca__media-upload">Nieuwe afbeelding uploaden<input type="file" accept="image/*"${gallery ? ' multiple' : ''}></label></div>
+      <p class="pkca__media-status" role="status" aria-live="polite">Afbeeldingen laden…</p><div class="pkca__media-grid"></div>
+      <footer><div class="pkca__media-pages"><button type="button" data-media-previous>Vorige</button><span data-media-page></span><button type="button" data-media-next>Volgende</button></div><button type="button" data-media-confirm disabled>${gallery ? 'Toevoegen aan galerij' : 'Afbeelding gebruiken'}</button></footer>`;
+    root.append(dialog);
+    const grid = dialog.querySelector('.pkca__media-grid');
+    const status = dialog.querySelector('.pkca__media-status');
+    const search = dialog.querySelector('[data-media-search]');
+    const confirm = dialog.querySelector('[data-media-confirm]');
+    const previous = dialog.querySelector('[data-media-previous]');
+    const next = dialog.querySelector('[data-media-next]');
+    const selected = new Set();
+    let page = 1;
+    let pages = 1;
+    let controller;
+    let debounce;
+    let disposed = false;
+    let requestNumber = 0;
+    const updateSelection = () => {
+      grid.querySelectorAll('[data-media-id]').forEach(item => item.setAttribute('aria-pressed', String(selected.has(Number(item.dataset.mediaId)))));
+      confirm.disabled = !selected.size;
+      confirm.textContent = gallery ? `Toevoegen aan galerij${selected.size ? ` (${selected.size})` : ''}` : 'Afbeelding gebruiken';
     };
-    frame.on('open', () => {
-      root.classList.add('pkca--media-open');
-      window.requestAnimationFrame(() => {
-        const modals = Array.from(document.querySelectorAll('.media-modal'));
-        const backdrops = Array.from(document.querySelectorAll('.media-modal-backdrop'));
-        mediaModal = frame.modal?.el || modals[modals.length - 1] || null;
-        mediaBackdrop = backdrops[backdrops.length - 1] || null;
-        if (gallery) frame.content?.mode('browse');
-      });
+    const load = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      const number = ++requestNumber;
+      previous.disabled = next.disabled = true;
+      grid.setAttribute('aria-busy', 'true');
+      status.textContent = 'Afbeeldingen laden…';
+      try {
+        const query = new URLSearchParams({ post_id: String(config.postId), page: String(page), search: search.value.trim() });
+        const data = await request(`media?${query}`, { signal: controller.signal });
+        if (disposed || number !== requestNumber) return;
+        pages = data.pages || 1;
+        grid.innerHTML = (data.items || []).map(item => `<button type="button" data-media-id="${Number(item.id)}" aria-pressed="false" title="${escapeHtml(item.title)}"><img src="${escapeHtml(item.url)}" alt="" loading="lazy"><span>${escapeHtml(item.title || 'Afbeelding')}</span></button>`).join('');
+        status.textContent = data.items?.length ? `${data.total} afbeelding${data.total === 1 ? '' : 'en'}${gallery ? ' · Je kunt meerdere afbeeldingen selecteren.' : ''}` : 'Geen afbeeldingen gevonden. Probeer een andere zoekterm.';
+        dialog.querySelector('[data-media-page]').textContent = `Pagina ${page} van ${pages}`;
+        previous.disabled = page <= 1;
+        next.disabled = page >= pages;
+        updateSelection();
+      } catch (error) {
+        if (disposed || number !== requestNumber || error.name === 'AbortError') return;
+        grid.replaceChildren();
+        status.textContent = error.message || 'De afbeeldingen konden niet worden geladen. Probeer opnieuw te zoeken.';
+      } finally {
+        if (number === requestNumber) grid.removeAttribute('aria-busy');
+      }
+    };
+    grid.addEventListener('click', event => {
+      const item = event.target.closest('[data-media-id]');
+      if (!item) return;
+      const id = Number(item.dataset.mediaId);
+      if (selected.has(id)) selected.delete(id);
+      else { if (!gallery) selected.clear(); selected.add(id); }
+      updateSelection();
     });
-    frame.on('close', () => {
-      // Also handle closing through Escape or the modal's close button.
-      window.setTimeout(disposeMediaFrame, 0);
+    search.addEventListener('input', () => {
+      clearTimeout(debounce);
+      controller?.abort();
+      ++requestNumber;
+      debounce = setTimeout(() => { page = 1; load(); }, 250);
     });
-    const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
-    const current = gallery ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
-    frame.on('select', async () => {
-      const selected = frame.state().get('selection').toJSON();
-      const selectedIds = selected.map(item => Number(item.id)).filter(Boolean);
-      const value = gallery ? [...new Set([...current, ...selectedIds])] : Number(selectedIds[0] || 0);
-      if (!value || (Array.isArray(value) && !value.length)) return;
-      // Dispose synchronously. Waiting for WordPress' later `close` event can
-      // leave a large, empty media-modal above the frontend editor after upload.
-      disposeMediaFrame();
+    previous.addEventListener('click', () => { if (page > 1) { --page; load(); } });
+    next.addEventListener('click', () => { if (page < pages) { ++page; load(); } });
+    dialog.querySelector('[data-media-close]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => {
+      disposed = true;
+      controller?.abort();
+      clearTimeout(debounce);
+      dialog.remove();
+      if (button.isConnected) button.focus({ preventScroll: true });
+    });
+    dialog.querySelector('input[type=file]').addEventListener('change', async event => {
+      if (!event.target.files?.length || state.activeLayout !== editorIndex) return;
+      const input = event.target;
+      dialog.close();
+      await uploadLayoutImage(input, layout, field);
+    });
+    confirm.addEventListener('click', async () => {
+      if (!selected.size || state.activeLayout !== editorIndex || state.busy) return;
+      const pending = (state.context?.changes || []).find(change => Number(change.section) === Number(layout.number) && (change.field_path || []).join('.') === field.path.join('.'));
+      const current = gallery ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
+      const value = gallery ? [...new Set([...current, ...selected])] : [...selected][0];
+      dialog.close();
       await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], gallery ? 'Galerij aangepast.' : 'Afbeelding aangepast.', { keepEditor: gallery });
     });
-    frame.open();
+    dialog.showModal();
+    load();
   }
 
   function applyConditionalLogic() {

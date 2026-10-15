@@ -3,7 +3,8 @@
   "scripts": {
     "test:preview": "node preview-runtime.cjs",
     "test:editor": "node editor-changes.cjs",
-    "test": "node preview-runtime.cjs && node editor-changes.cjs"
+    "test": "node preview-runtime.cjs && node editor-changes.cjs && node media-picker.cjs",
+    "test:media": "node media-picker.cjs"
   },
   "devDependencies": {
     "jsdom": "30.1.3"

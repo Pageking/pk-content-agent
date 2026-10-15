@@ -30,8 +30,8 @@ try {
  $assert( $plugin->user_has_access() && true === $rest->can_edit( $request ), 'Selected editor can use the tool on an editable page' );
  $allowed = array( 'administrator' );
  $assert( ! $plugin->user_has_access() && is_wp_error( $rest->can_edit( $request ) ), 'Excluded editor cannot use the tool despite WordPress editing rights' );
- foreach ( array( 'context', 'chat', 'change', 'upload', 'publish', 'discard' ) as $route ) {
-  $denied = new WP_REST_Request( 'context' === $route ? 'GET' : 'POST', '/pk-content-agent/v1/' . $route );
+ foreach ( array( 'context', 'media', 'chat', 'change', 'upload', 'publish', 'discard' ) as $route ) {
+  $denied = new WP_REST_Request( in_array( $route, array( 'context', 'media' ), true ) ? 'GET' : 'POST', '/pk-content-agent/v1/' . $route );
   $denied->set_param( 'post_id', $post_id );
   $response = rest_do_request( $denied );
   $assert( 403 === $response->get_status() && 'pkca_role_forbidden' === $response->get_data()['code'], "Excluded role is blocked at REST route: $route" );
