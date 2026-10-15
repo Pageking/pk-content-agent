@@ -831,7 +831,15 @@
     const edits = collectLayoutEdits(layout, fields);
     if (!edits) return;
     if (!edits.length) {
-      setLayoutStatus('Er zijn geen velden gewijzigd in deze layout.', 'info');
+      // Media actions already queue their changes while the editor stays open.
+      // The preview button must also finish that flow, including a deferred
+      // gallery refresh, when no further text fields have changed.
+      const hasPendingChanges = (state.context?.changes || []).some(change => Number(change.section) === Number(layout.number));
+      if (hasPendingChanges) {
+        closeLayoutEditor();
+        return;
+      }
+      setLayoutStatus('Je hebt hier nog niets aangepast. Pas eerst een tekst of afbeelding aan.', 'info');
       return;
     }
     submit.disabled = true;
