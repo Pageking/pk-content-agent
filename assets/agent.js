@@ -466,7 +466,7 @@
         if (!target) return;
         if (String(target.id) === String(config.postId)) return;
         const card = anchor.closest('article, li, [class*="card"], [class*="slide"], [class*="item"]');
-        if (!card || !section.contains(card) || usedCards.has(card)) return;
+        if (!card || card === section || card.matches('.flex-layout, .sidebar-layout, .flex-repeater, .flex-content') || !section.contains(card) || usedCards.has(card)) return;
         usedCards.add(card);
         found.push({ card, target });
       });
