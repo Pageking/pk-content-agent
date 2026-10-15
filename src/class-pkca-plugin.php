@@ -26,13 +26,14 @@ final class PKCA_Plugin {
 	}
 
 	public function enqueue_global_navigation(): void {
+		if ( ! $this->user_has_access() ) return;
 		$screen = get_current_screen();
 		if ( ! $screen || ! str_contains( $screen->id, 'pk_global_blocks' ) ) return;
 		wp_enqueue_script( 'pkca-global-navigation', plugins_url( 'assets/global-navigation.js', PKCA_FILE ), array( 'acf-input' ), filemtime( PKCA_DIR . 'assets/global-navigation.js' ), true );
 	}
 
 	public function enqueue_frontend(): void {
-		if ( is_admin() || ! is_user_logged_in() ) {
+		if ( is_admin() || ! $this->user_has_access() ) {
 			return;
 		}
 		if ( is_singular() ) {
@@ -75,7 +76,7 @@ final class PKCA_Plugin {
 	}
 
 	public function apply_preview( mixed $value, int|string $post_id, array $field ): mixed {
-		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! is_user_logged_in() || ! is_array( $value ) || ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
+		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! $this->user_has_access() || ! is_array( $value ) || ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
 			return $value;
 		}
 
@@ -89,14 +90,14 @@ final class PKCA_Plugin {
 	}
 
 	public function apply_raw_preview( mixed $value, mixed $post_id, array $field ): mixed {
-		if ( is_admin() || ! is_user_logged_in() || ! is_numeric( $post_id ) || (int) $post_id < 1 || ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
+		if ( is_admin() || ! $this->user_has_access() || ! is_numeric( $post_id ) || (int) $post_id < 1 || ! $this->post_type_is_enabled( (string) get_post_type( (int) $post_id ) ) ) {
 			return $value;
 		}
 		return PKCA_Content::apply_changes_to_raw_value( $value, (int) $post_id );
 	}
 
 	public function apply_sub_field_preview( mixed $value, mixed $post_id, array $field ): mixed {
-		if ( is_admin() || ! is_user_logged_in() ) {
+		if ( is_admin() || ! $this->user_has_access() ) {
 			return $value;
 		}
 		if ( is_numeric( $post_id ) && (int) $post_id > 0 ) {
@@ -119,7 +120,7 @@ final class PKCA_Plugin {
 	}
 
 	public function apply_archive_preview( mixed $value, mixed $post_id, array $field ): mixed {
-		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! is_user_logged_in() || ! is_array( $value ) ) {
+		if ( PKCA_Content::preview_is_suppressed() || is_admin() || ! $this->user_has_access() || ! is_array( $value ) ) {
 			return $value;
 		}
 		$target = $this->current_archive_target();
@@ -146,7 +147,33 @@ final class PKCA_Plugin {
 		return '' !== $post_type && ! in_array( $post_type, (array) get_option( 'pkca_excluded_post_types', array() ), true );
 	}
 
+	public function user_has_access(): bool {
+		$user = wp_get_current_user();
+		if ( ! $user->exists() ) return false;
+		$allowed = get_option( 'pkca_allowed_roles', null );
+		// Until configured, retain the existing WordPress capability checks.
+		if ( null === $allowed ) return true;
+		return (bool) array_intersect( $user->roles, is_array( $allowed ) ? $allowed : array() );
+	}
+
+	public function default_allowed_roles(): array {
+		$capabilities = array( 'edit_posts', 'edit_pages', 'manage_options' );
+		foreach ( get_post_types( array(), 'objects' ) as $post_type ) $capabilities[] = $post_type->cap->edit_posts;
+		$roles = array();
+		foreach ( wp_roles()->roles as $slug => $role ) {
+			foreach ( array_unique( $capabilities ) as $capability ) {
+				if ( ! empty( $role['capabilities'][ $capability ] ) ) { $roles[] = $slug; break; }
+			}
+		}
+		return $roles;
+	}
+
+	public function sanitize_allowed_roles( mixed $value ): array {
+		return array_values( array_unique( array_intersect( array_map( 'sanitize_key', is_array( $value ) ? $value : array() ), array_keys( wp_roles()->roles ) ) ) );
+	}
+
 	public function register_settings(): void {
+		register_setting( 'pkca_settings', 'pkca_allowed_roles', array( 'type' => 'array', 'sanitize_callback' => array( $this, 'sanitize_allowed_roles' ), 'show_in_rest' => false ) );
 		register_setting(
 			'pkca_settings',
 			'pkca_openai_api_key',
@@ -231,12 +258,30 @@ final class PKCA_Plugin {
 		$source_posts = get_posts( array( 'post_type' => array_values( array_diff( get_post_types( array( 'public' => true ), 'names' ), array( 'attachment' ) ) ), 'post_status' => 'publish', 'posts_per_page' => 250, 'orderby' => 'title', 'order' => 'ASC' ) );
 		$excluded_post_types = (array) get_option( 'pkca_excluded_post_types', array() );
 		$public_post_types = get_post_types( array( 'public' => true ), 'objects' );
+		$allowed_roles = get_option( 'pkca_allowed_roles', $this->default_allowed_roles() );
 		?>
 		<div class="wrap">
 			<h1>PK Content Agent</h1>
+			<style>
+			.pkca-role-setting{display:flex;align-items:center;justify-content:space-between;gap:20px;max-width:420px;margin:8px 0;padding:10px 14px;border:1px solid #dcdcde;border-radius:6px;background:#fff;cursor:pointer}
+			.pkca-role-setting .pkca-role-toggle{appearance:none;position:relative;flex:0 0 40px;width:40px;height:22px;margin:0;border:0;border-radius:12px;background:#787c82;box-shadow:none;transition:background .15s}
+			.pkca-role-setting .pkca-role-toggle:before{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;margin:0;border-radius:50%;background:#fff;transition:transform .15s}
+			.pkca-role-setting .pkca-role-toggle:checked{background:#2271b1}.pkca-role-setting .pkca-role-toggle:checked:before{transform:translateX(18px)}
+			.pkca-role-setting .pkca-role-toggle:focus-visible{outline:2px solid #2271b1;outline-offset:3px}
+			</style>
 			<p>De chat verschijnt op bewerkbare frontendpagina’s en post-typearchieven met een bijbehorende ACF-optionspagina.</p>
 			<form action="options.php" method="post">
 				<?php settings_fields( 'pkca_settings' ); ?>
+				<h2>Toegang per gebruikersrol</h2>
+				<p>Kies welke rollen de content-assistent mogen zien en gebruiken. De bestaande WordPress-bewerkrechten blijven gelden.</p>
+				<fieldset>
+					<legend class="screen-reader-text">Rollen met toegang tot de content-assistent</legend>
+					<input type="hidden" name="pkca_allowed_roles[]" value="">
+					<?php foreach ( wp_roles()->roles as $slug => $role ) : ?>
+						<label class="pkca-role-setting"><span><?= esc_html( translate_user_role( $role['name'] ) ); ?></span><input class="pkca-role-toggle" type="checkbox" role="switch" name="pkca_allowed_roles[]" value="<?= esc_attr( $slug ); ?>" <?= checked( in_array( $slug, (array) $allowed_roles, true ), true, false ); ?>></label>
+					<?php endforeach; ?>
+				</fieldset>
+				<p class="description">Een gebruiker met meerdere rollen krijgt toegang als minstens één rol aanstaat. Zet alle rollen uit om de tool voor iedereen te verbergen. Beheerders kunnen deze instellingen blijven aanpassen.</p>
 				<table class="form-table" role="presentation">
 					<tr>
 						<th scope="row"><label for="pkca_openai_api_key">OpenAI API-key</label></th>

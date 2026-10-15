@@ -46,6 +46,7 @@ final class PKCA_REST {
 	}
 
 	public function can_edit( WP_REST_Request $request ): bool|WP_Error {
+		if ( ! PKCA_Plugin::instance()->user_has_access() ) return new WP_Error( 'pkca_role_forbidden', 'De content-assistent is niet beschikbaar voor jouw gebruikersrol.', array( 'status' => 403 ) );
 		$post_id = $this->request_target( $request );
 		$target = PKCA_Content::target( $post_id );
 		$excluded = (array) get_option( 'pkca_excluded_post_types', array() );
