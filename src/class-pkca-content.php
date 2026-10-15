@@ -251,7 +251,7 @@ final class PKCA_Content {
 		return $schemas;
 	}
 
-	private static function apply_field_schema( array $schema, array $values, array $path, array &$fields, array $raw_path ): void {
+	private static function apply_field_schema( array $schema, array $values, array $path, array &$fields, array $raw_path, array $parent_instructions = array() ): void {
 		foreach ( $schema as $definition ) {
 			$name = (string) ( $definition['name'] ?? '' );
 			if ( '' === $name ) {
@@ -261,6 +261,10 @@ final class PKCA_Content {
 			$current_raw_path = array_merge( $raw_path, array( (string) ( $definition['key'] ?? $name ) ) );
 			$value = $values[ $name ] ?? null;
 			$acf_type = (string) ( $definition['type'] ?? 'text' );
+			$child_instructions = $parent_instructions;
+			if ( in_array( $acf_type, array( 'group', 'clone', 'link' ), true ) && ! empty( $definition['instructions'] ) ) {
+				$child_instructions[] = array( 'path' => $current_path, 'text' => wp_strip_all_tags( (string) $definition['instructions'] ) );
+			}
 			if ( 'link' === $acf_type ) {
 				$link_value = is_array( $value ) ? $value : array();
 				self::apply_field_schema(
@@ -272,18 +276,19 @@ final class PKCA_Content {
 					$link_value,
 					$current_path,
 					$fields,
-					$current_raw_path
+					$current_raw_path,
+					$child_instructions
 				);
 				continue;
 			}
 			if ( in_array( $acf_type, array( 'group', 'clone' ), true ) && ! empty( $definition['sub_fields'] ) ) {
-				self::apply_field_schema( (array) $definition['sub_fields'], is_array( $value ) ? $value : array(), $current_path, $fields, $current_raw_path );
+				self::apply_field_schema( (array) $definition['sub_fields'], is_array( $value ) ? $value : array(), $current_path, $fields, $current_raw_path, $child_instructions );
 				continue;
 			}
 			if ( 'repeater' === $acf_type && ! empty( $definition['sub_fields'] ) ) {
 				$row_fields = array();
 				self::apply_field_schema( (array) $definition['sub_fields'], self::schema_defaults( (array) $definition['sub_fields'] ), array(), $row_fields, array() );
-				$fields[] = array( 'key' => (string) ( $definition['key'] ?? '' ), 'path' => $current_path, 'raw_path' => $current_raw_path, 'name' => $name, 'label' => (string) ( $definition['label'] ?? $name ), 'type' => 'repeater', 'acf_type' => 'repeater', 'preview' => count( is_array( $value ) ? $value : array() ) . ' rijen', 'value' => is_array( $value ) ? $value : array(), 'row_template' => self::schema_defaults( (array) $definition['sub_fields'] ), 'row_fields' => $row_fields, 'min' => max( 0, (int) ( $definition['min'] ?? 0 ) ), 'max' => max( 0, (int) ( $definition['max'] ?? 0 ) ), 'editable' => true, 'choices' => array(), 'images' => array(), 'instructions' => (string) ( $definition['instructions'] ?? '' ), 'placeholder' => '', 'required' => ! empty( $definition['required'] ), 'conditional_logic' => is_array( $definition['conditional_logic'] ?? null ) ? $definition['conditional_logic'] : array() );
+				$fields[] = array( 'key' => (string) ( $definition['key'] ?? '' ), 'path' => $current_path, 'raw_path' => $current_raw_path, 'name' => $name, 'label' => (string) ( $definition['label'] ?? $name ), 'type' => 'repeater', 'acf_type' => 'repeater', 'preview' => count( is_array( $value ) ? $value : array() ) . ' rijen', 'value' => is_array( $value ) ? $value : array(), 'row_template' => self::schema_defaults( (array) $definition['sub_fields'] ), 'row_fields' => $row_fields, 'min' => max( 0, (int) ( $definition['min'] ?? 0 ) ), 'max' => max( 0, (int) ( $definition['max'] ?? 0 ) ), 'editable' => true, 'choices' => array(), 'images' => array(), 'instructions' => (string) ( $definition['instructions'] ?? '' ), 'group_instructions' => $parent_instructions, 'placeholder' => '', 'required' => ! empty( $definition['required'] ), 'conditional_logic' => is_array( $definition['conditional_logic'] ?? null ) ? $definition['conditional_logic'] : array() );
 				foreach ( is_array( $value ) ? $value : array() as $row_index => $row ) {
 					self::apply_field_schema( (array) $definition['sub_fields'], is_array( $row ) ? $row : array(), array_merge( $current_path, array( (string) $row_index ) ), $fields, array_merge( $current_raw_path, array( (string) $row_index ) ) );
 				}
@@ -318,6 +323,7 @@ final class PKCA_Content {
 				'choices'    => (array) ( $definition['choices'] ?? array() ),
 				'images'     => 'gallery' === $acf_type ? self::gallery_images( $value ) : array(),
 				'instructions' => (string) ( $definition['instructions'] ?? '' ),
+				'group_instructions' => $parent_instructions,
 				'placeholder'  => (string) ( $definition['placeholder'] ?? '' ),
 				'required'     => ! empty( $definition['required'] ),
 				'conditional_logic' => is_array( $definition['conditional_logic'] ?? null ) ? $definition['conditional_logic'] : array(),

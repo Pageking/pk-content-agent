@@ -538,7 +538,7 @@
     layoutEditor.innerHTML = `<header class="pkca__layout-editor-header"><div><strong>Blok ${layout.number}</strong><small>${escapeHtml(layout.label || humanize(layout.layout))}</small></div><button type="button" aria-label="Layout-editor sluiten">×</button></header>
       <form class="pkca__layout-form"><div class="pkca__layout-fields">${layoutFieldsMarkup(layoutFields, layout.number)}</div>
         <div class="pkca__layout-status" role="status" aria-live="polite" hidden></div>
-        <div class="pkca__layout-footer"><button class="pkca__layout-reset" type="button">Invoer verwerpen</button><button class="pkca__layout-save" type="submit">Voorbeeld bekijken</button></div></form>`;
+        <div class="pkca__layout-footer"><button class="pkca__layout-reset" type="button">Aanpassingen annuleren</button><button class="pkca__layout-save" type="submit">Voorbeeld bekijken</button></div></form>`;
     layoutEditor.querySelector('.pkca__layout-editor-header button').addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
@@ -570,6 +570,7 @@
 
   function layoutFieldsMarkup(fields, sectionNumber) {
     const rendered = new Set();
+    const shownInstructions = new Set();
     const technical = new Set(['tag', 'variant', 'color', 'mode', 'layout_id', 'icon', 'icon_type', 'icon_name_library', 'icon_name_custom']);
     const advanced = [];
     const content = fields.map((field, index) => {
@@ -579,20 +580,29 @@
           if (candidateIndex !== index && pathStartsWith(candidate.path || [], field.path || [])) rendered.add(candidateIndex);
         });
       }
+      const groupHelp = fieldGroupHelp(field, shownInstructions);
       const path = field.path.join('/');
       if (path.endsWith('/tag')) {
         const textIndex = fields.findIndex(candidate => candidate.path.join('/') === path.replace(/\/tag$/, '/text'));
         if (textIndex >= 0) {
           rendered.add(textIndex);
-          advanced.push(layoutField(field, index, sectionNumber));
-          return layoutField(fields[textIndex], textIndex, sectionNumber);
+          return `${groupHelp}<div class="pkca__heading-row">${layoutField(field, index, sectionNumber)}${layoutField(fields[textIndex], textIndex, sectionNumber)}</div>`;
         }
       }
-      const markup = layoutField(field, index, sectionNumber);
+      const markup = groupHelp + layoutField(field, index, sectionNumber);
       if (technical.has(field.name)) { advanced.push(markup); return ''; }
       return markup;
     }).join('');
     return content + (advanced.length ? `<details class="pkca__advanced"><summary>Meer opties</summary><div>${advanced.join('')}</div></details>` : '');
+  }
+
+  function fieldGroupHelp(field, shown) {
+    return (field.group_instructions || []).map(group => {
+      const key = (group.path || []).join('.');
+      if (!group.text || shown.has(key)) return '';
+      shown.add(key);
+      return `<div class="pkca__field-instructions">${escapeHtml(group.text)}</div>`;
+    }).join('');
   }
 
   function layoutField(field, index, sectionNumber) {
@@ -765,7 +775,7 @@
       }
       restored = true;
     });
-    if (restored) setLayoutStatus('Je eerdere invoer is bewaard. Bekijk het voorbeeld om de wijzigingen te controleren.', 'info');
+    if (restored) setLayoutStatus('Je kunt verdergaan waar je gebleven was. Je aanpassingen zijn nog niet opgeslagen.', 'info');
   }
 
   function clearLayoutDraft() {
@@ -893,7 +903,10 @@
   function repeaterRowsMarkup(field, fieldIndex, rows) {
     const rowFields = (field.row_fields || []).filter(rowField => rowField.type !== 'repeater');
     const atMinimum = Number(field.min || 0) > 0 && rows.length <= Number(field.min);
-    return rows.map((row, rowIndex) => `<section class="pkca__repeater-row"><header><strong>Rij ${rowIndex + 1}</strong><button type="button" data-repeater-action="remove" data-row="${rowIndex}" data-field-index="${fieldIndex}"${atMinimum ? ' disabled' : ''}>Verwijderen</button></header><div class="pkca__repeater-fields">${rowFields.map(rowField => repeaterInputMarkup(rowField, row, rowIndex)).join('')}</div></section>`).join('');
+    return rows.map((row, rowIndex) => {
+      const shownInstructions = new Set();
+      return `<section class="pkca__repeater-row"><header><strong>Rij ${rowIndex + 1}</strong><button type="button" data-repeater-action="remove" data-row="${rowIndex}" data-field-index="${fieldIndex}"${atMinimum ? ' disabled' : ''}>Verwijderen</button></header><div class="pkca__repeater-fields">${rowFields.map(rowField => fieldGroupHelp(rowField, shownInstructions) + repeaterInputMarkup(rowField, row, rowIndex)).join('')}</div></section>`;
+    }).join('');
   }
 
   function repeaterInputMarkup(field, row, rowIndex) {
@@ -901,19 +914,20 @@
     const value = valueAtPath(row, path);
     const attrs = `data-repeater-input data-row="${rowIndex}" data-repeater-path="${escapeHtml(path.join('.'))}"`;
     const label = escapeHtml(friendlyLabel(field.label || humanize(path[path.length - 1] || 'Veld')));
+    const help = field.instructions ? `<small class="pkca__layout-help">${escapeHtml(field.instructions)}</small>` : '';
     if (field.type === 'boolean') {
       const checked = value === true || value === 1 || value === '1';
-      return `<label><span>${label}</span><span class="pkca__layout-toggle"><input type="checkbox" ${attrs}${checked ? ' checked' : ''}><span>${checked ? 'Ingeschakeld' : 'Uitgeschakeld'}</span></span></label>`;
+      return `<label><span>${label}</span>${help}<span class="pkca__layout-toggle"><input type="checkbox" ${attrs}${checked ? ' checked' : ''}><span>${checked ? 'Ingeschakeld' : 'Uitgeschakeld'}</span></span></label>`;
     }
     if (field.type === 'option') {
-      return `<label><span>${label}</span><select ${attrs}>${Object.entries(field.choices || {}).map(([key, choice]) => `<option value="${escapeHtml(key)}"${String(key) === String(value ?? '') ? ' selected' : ''}>${escapeHtml(choice)}</option>`).join('')}</select></label>`;
+      return `<label><span>${label}</span>${help}<select ${attrs}>${Object.entries(field.choices || {}).map(([key, choice]) => `<option value="${escapeHtml(key)}"${String(key) === String(value ?? '') ? ' selected' : ''}>${escapeHtml(choice)}</option>`).join('')}</select></label>`;
     }
     const plain = String(value ?? '');
     const type = field.type === 'number' ? 'number' : field.type === 'email' ? 'email' : 'text';
     const control = plain.length > 90 || field.acf_type === 'textarea' || field.acf_type === 'wysiwyg'
       ? `<textarea rows="3" ${attrs}>${escapeHtml(plain)}</textarea>`
       : `<input type="${type}" value="${escapeHtml(plain)}" ${attrs}>`;
-    return `<label><span>${label}</span>${control}</label>`;
+    return `<label><span>${label}</span>${help}${control}</label>`;
   }
 
   function syncRepeaterValue(input) {
