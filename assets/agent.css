@@ -107,7 +107,7 @@ body:has(.pkca__layout-editor:not([hidden])) .pkca__layout-button{opacity:.35}
 .pkca--icons-hidden .pkca__layout-button{display:none!important}
 
 .pkca .pkca__changes{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;max-height:none;padding:12px;overflow:visible}
-.pkca__pending-summary{display:grid;min-width:0;gap:2px}.pkca__pending-summary strong{font-size:12px;white-space:nowrap}.pkca__pending-summary span{font-size:11px;color:#526071}
+.pkca__pending-summary{display:grid;min-width:0;gap:2px}.pkca__pending-summary strong{font-size:12px;white-space:normal}.pkca__pending-summary span{font-size:11px;color:#526071}
 .pkca__review-open,.pkca__review-return{border:0;border-radius:8px;padding:9px 11px;background:var(--pkca-ink);color:#fff;font:600 12px/1.3 Inter,system-ui,sans-serif;cursor:pointer}
 .pkca__review-open{flex:0 1 auto;max-width:55%;text-align:center}
 .pkca__review-return[hidden],.pkca .pkca__changes[hidden]{display:none!important}
@@ -134,3 +134,5 @@ body:has(.pkca__layout-editor:not([hidden])) .pkca__layout-button{opacity:.35}
 @media(max-width:640px){.pkca__review{width:calc(100vw - 16px);height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:12px}.pkca__review-header{padding:16px}.pkca__review-header h2{font-size:19px}.pkca__review-body{padding:16px}.pkca__review-comparison{grid-template-columns:1fr}.pkca__review-comparison>section+section{border-left:0;border-top:1px solid #e4e8e2}.pkca__review-card>header{align-items:flex-start;flex-direction:column;gap:4px}.pkca__review-footer{padding:12px 16px;flex-wrap:wrap}.pkca__review-footer>div{width:100%}.pkca__review-publish{flex:1}.pkca__launcher:has(.pkca__review-return:not([hidden])) .pkca__toggle{display:none!important}}
 
 .pkca__review-hint{margin:0;padding:12px 18px;color:#526071;background:#f8f9f6;font-size:12px;line-height:1.5}
+
+.pkca__pending-location{overflow-wrap:anywhere}.pkca__field-pending{display:block;width:fit-content;padding:3px 7px;border-radius:5px;background:#e5f8ec;color:#175537;font-size:11px;font-weight:600}

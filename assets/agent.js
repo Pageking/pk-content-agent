@@ -100,6 +100,13 @@
     }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-hidden'] });
   }
   loadContext();
+  // Back/forward navigation can restore an older DOM without running PHP's
+  // private preview filters again (notably for galleries and repeaters).
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    captureLayoutDraft();
+    loadContext({ restorePreview: true });
+  });
 
   function updateIconVisibility() {
     root.classList.toggle('pkca--icons-hidden', !iconsVisible);
@@ -332,9 +339,15 @@
     return data;
   }
 
-  async function loadContext() {
+  async function loadContext({ restorePreview = false } = {}) {
     try {
+      const hadPendingChanges = Boolean(state.context?.changes?.length);
       state.context = await request(`context?post_id=${config.postId}`);
+      if (restorePreview && (hadPendingChanges || state.context.changes?.length)) {
+        sessionStorage.setItem('pkca-preview-resume', String(config.postId));
+        window.location.reload();
+        return;
+      }
       applyPreview(state.context.changes || []);
       renderChanges(state.context.changes || []);
       installLayoutButtons();
@@ -646,7 +659,7 @@
     const label = friendlyLabel(rawLabel);
     const conditions = encodeURIComponent(JSON.stringify(field.conditional_logic || []));
     const meta = `data-acf-key="${escapeHtml(field.key || '')}" data-conditions="${escapeHtml(conditions)}"`;
-    const help = field.instructions ? `<small class="pkca__layout-help">${escapeHtml(field.instructions)}</small>` : '';
+    const help = `${pending ? '<small class="pkca__field-pending">Aangepast · nog niet opgeslagen</small>' : ''}${field.instructions ? `<small class="pkca__layout-help">${escapeHtml(field.instructions)}</small>` : ''}`;
     if (field.type === 'image') {
       const imageUrl = pending?.new_url || field.url || '';
       return `<div class="pkca__layout-field pkca__layout-field--image" ${meta}><span>${escapeHtml(label)}</span>${help}${imageUrl ? `<img class="pkca__layout-image-preview" src="${escapeHtml(imageUrl)}" alt="">` : '<span class="pkca__layout-image-empty">Geen afbeelding gekozen</span>'}<small>${escapeHtml(field.preview || 'Afbeelding')}</small><div class="pkca__media-actions"><label><input type="file" accept="image/*" data-field-index="${index}"><em>Uploaden</em></label><button type="button" data-media-field="${index}">Mediabibliotheek</button></div></div>`;
@@ -1512,6 +1525,7 @@
     const pendingCount = Array.isArray(items) ? items.length : 0;
     root.classList.toggle('pkca--has-pending', pendingCount > 0);
     toggle.dataset.pendingCount = String(pendingCount);
+    if (!root.classList.contains('pkca--selecting')) toggle.textContent = pendingCount ? `Pagina aanpassen · ${pendingCount} niet opgeslagen` : 'Pagina aanpassen';
     toggle.setAttribute('aria-label', pendingCount > 0
       ? `Pagina aanpassen, ${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} staat klaar`
       : 'Pagina aanpassen');
@@ -1521,7 +1535,11 @@
       return;
     }
     changes.hidden = false;
-    changes.innerHTML = `<div class="pkca__pending-summary"><strong>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} klaar</strong><span>Nog niet opgeslagen</span></div><button type="button" class="pkca__review-open">Wijzigingen bekijken</button>`;
+    const locations = [...new Set(items.map(item => {
+      const { section, field } = reviewField(item);
+      return `${section?.label || `Onderdeel ${item.section}`} · ${friendlyLabel(field?.label || item.field_name || 'Inhoud')}`;
+    }))];
+    changes.innerHTML = `<div class="pkca__pending-summary"><strong>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} · niet opgeslagen</strong><span>Je aanpassingen zijn bewaard.</span><span class="pkca__pending-location" title="${escapeHtml(locations.join(', '))}">${escapeHtml(locations.slice(0, 2).join(', '))}${locations.length > 2 ? ` +${locations.length - 2}` : ''}</span></div><button type="button" class="pkca__review-open">Bekijken en opslaan</button>`;
     changes.querySelector('.pkca__review-open').addEventListener('click', openChangesReview);
   }
 
