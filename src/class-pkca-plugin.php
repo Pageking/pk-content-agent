@@ -14,6 +14,8 @@ final class PKCA_Plugin {
 	}
 
 	public function boot(): void {
+		add_filter( 'script_loader_src', array( $this, 'version_asset_url' ), PHP_INT_MAX, 2 );
+		add_filter( 'style_loader_src', array( $this, 'version_asset_url' ), PHP_INT_MAX, 2 );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_global_navigation' ) );
 		add_action( 'admin_menu', array( $this, 'register_settings_page' ) );
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
@@ -23,6 +25,13 @@ final class PKCA_Plugin {
 		add_filter( 'acf/format_value/name=content_repeater', array( $this, 'apply_preview' ), 100, 3 );
 		add_filter( 'acf/load_value', array( $this, 'apply_sub_field_preview' ), 100, 3 );
 		add_filter( 'acf/format_value', array( $this, 'apply_archive_preview' ), 100, 3 );
+	}
+
+	public function version_asset_url( string $src, string $handle ): string {
+		// Some themes strip WordPress' ver parameter, leaving old frontend code
+		// cached after a plugin update. Add our build marker after those filters.
+		return in_array( $handle, array( 'pk-content-agent', 'pkca-global-navigation' ), true )
+			? add_query_arg( 'pkca_build', PKCA_VERSION, $src ) : $src;
 	}
 
 	public function enqueue_global_navigation(): void {
