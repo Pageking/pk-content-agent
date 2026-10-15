@@ -1539,10 +1539,20 @@
     }
     if (item.type === 'gallery') {
       const images = item[`${side}_images`] || [];
-      return images.length ? `<ol class="pkca__review-gallery">${images.map((image, index) => `<li><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.title || '')}"><span>${index + 1}</span></li>`).join('')}</ol>` : '<span class="pkca__review-empty">Geen afbeeldingen</span>';
+      const other = item[`${side === 'old' ? 'new' : 'old'}_images`] || [];
+      const positions = Array.from({ length: Math.max(images.length, other.length) }, (_, index) => index)
+        .filter(index => String(images[index]?.id ?? images[index]?.ID ?? images[index]?.url ?? '') !== String(other[index]?.id ?? other[index]?.ID ?? other[index]?.url ?? ''));
+      return `<ol class="pkca__review-gallery">${positions.map(index => images[index]
+        ? `<li><img src="${escapeHtml(images[index].url)}" alt="${escapeHtml(images[index].title || '')}"><span>${index + 1}</span></li>`
+        : `<li><span class="pkca__review-empty">${side === 'old' ? 'Toegevoegd' : 'Verwijderd'} · ${index + 1}</span></li>`).join('')}</ol>`;
     }
     if (item.type === 'repeater' && Array.isArray(value)) {
-      return value.length ? `<ol class="pkca__review-rows">${value.map((row, index) => `<li><strong>Rij ${index + 1}</strong>${reviewRow(row, field?.row_fields || [])}</li>`).join('')}</ol>` : '<span class="pkca__review-empty">Geen rijen</span>';
+      const other = item[`${side === 'old' ? 'new' : 'old'}_value`] || [];
+      const positions = Array.from({ length: Math.max(value.length, other.length) }, (_, index) => index)
+        .filter(index => !sameReviewValue(value[index], other[index]));
+      return `<ol class="pkca__review-rows">${positions.map(index => `<li><strong>Rij ${index + 1}</strong>${value[index] === undefined
+        ? `<span class="pkca__review-empty">${side === 'old' ? 'Toegevoegd' : 'Verwijderd'}</span>`
+        : reviewRow(value[index], field?.row_fields || [], [], other[index])}</li>`).join('')}</ol>`;
     }
     let text = value;
     if (item.type === 'boolean') text = value === true || value === 1 || value === '1' ? 'Aan' : 'Uit';
@@ -1555,13 +1565,22 @@
     return stripHtml(String(value ?? '').replace(/<br\s*\/?>|<\/(?:p|li|div|h[1-6])>/gi, '\n')).trim();
   }
 
-  function reviewRow(value, fields, path = []) {
+  function sameReviewValue(value, other) {
+    if (value === other) return true;
+    if (!value || !other || typeof value !== 'object' || typeof other !== 'object') return false;
+    const keys = Object.keys(value);
+    return keys.length === Object.keys(other).length && keys.every(key => Object.hasOwn(other, key) && sameReviewValue(value[key], other[key]));
+  }
+
+  function reviewRow(value, fields, path = [], other) {
+    if (sameReviewValue(value, other)) return '';
     if (value && typeof value === 'object' && value.url && (value.ID || value.id)) {
       const definition = fields.find(field => field.path.join('.') === path.join('.'));
       return `<div class="pkca__review-row-field"><span>${escapeHtml(friendlyLabel(definition?.label || 'Afbeelding'))}</span><img class="pkca__review-image" src="${escapeHtml(value.url)}" alt="${escapeHtml(value.alt || '')}"></div>`;
     }
     if (value && typeof value === 'object') {
-      return Object.entries(value).filter(([key]) => key !== 'acf_fc_layout').map(([key, item]) => reviewRow(item, fields, [...path, key])).join('');
+      const keys = [...new Set([...Object.keys(value), ...Object.keys(other && typeof other === 'object' ? other : {})])];
+      return keys.filter(key => key !== 'acf_fc_layout').map(key => reviewRow(value[key], fields, [...path, key], other?.[key])).join('');
     }
     const definition = fields.find(field => field.path.join('.') === path.join('.'));
     const label = friendlyLabel(definition?.label || humanize(path[path.length - 1] || 'Waarde'));
@@ -1578,7 +1597,7 @@
     document.querySelectorAll('.pkca-review-highlight').forEach(element => element.classList.remove('pkca-review-highlight'));
     setOpen(true);
     reviewDialog.innerHTML = `<header class="pkca__review-header"><div><h2 id="pkca-review-title">Controleer je wijzigingen</h2><p>${items.length} wijziging${items.length === 1 ? '' : 'en'} · nog niet opgeslagen</p></div><button type="button" class="pkca__review-close" aria-label="Wijzigingenoverzicht sluiten">×</button></header>
-      <div class="pkca__review-body"><p class="pkca__review-explanation">De nieuwe versie is alleen voor jou zichtbaar. Pas na opslaan zien bezoekers je wijzigingen.</p>
+      <div class="pkca__review-body"><p class="pkca__review-explanation">Je ziet alleen wat je hebt aangepast. Pas na opslaan zien bezoekers je wijzigingen.</p>
       ${items.map((item, index) => {
         const { section, field } = reviewField(item);
         return `<article class="pkca__review-card"><header><div><span>${escapeHtml(section?.label || `Onderdeel ${item.section}`)}</span><h3>${escapeHtml(friendlyLabel(field?.label || item.field_name))}</h3></div><button type="button" data-review-locate="${index}">Bekijk op de pagina ↗</button></header>${field?.instructions || field?.group_instructions?.length ? `<p class="pkca__review-hint">${escapeHtml([...(field.group_instructions || []).map(group => group.text), field.instructions].filter(Boolean).join(' '))}</p>` : ''}<div class="pkca__review-comparison"><section><h4>Nu online</h4>${reviewValue(item, 'old', field)}</section><section><h4>Na opslaan</h4>${reviewValue(item, 'new', field)}</section></div><footer><button type="button" data-review-discard="${escapeHtml(item.id || '')}">Deze wijziging verwijderen</button></footer></article>`;
