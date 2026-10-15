@@ -473,13 +473,15 @@ final class PKCA_Content {
 		return $result;
 	}
 
-	private static function gallery_images( mixed $value ): array {
+	private static function gallery_images( mixed $value, bool $include_preview = false ): array {
 		$images = array();
 		foreach ( is_array( $value ) ? $value : array() as $image ) {
 			$id = is_array( $image ) ? (int) ( $image['ID'] ?? 0 ) : (int) $image;
 			$url = $id ? wp_get_attachment_image_url( $id, 'thumbnail' ) : '';
 			if ( $url ) {
-				$images[] = array( 'id' => $id, 'url' => $url, 'title' => (string) get_the_title( $id ) );
+				$item = array( 'id' => $id, 'url' => $url, 'title' => (string) get_the_title( $id ) );
+				if ( $include_preview ) $item['preview_html'] = wp_get_attachment_image( $id, 'large', false, array( 'loading' => 'eager' ) );
+				$images[] = $item;
 			}
 		}
 		return $images;
@@ -521,10 +523,11 @@ final class PKCA_Content {
 			$change['old_url'] = wp_get_attachment_image_url( (int) $change['old_value'], 'full' ) ?: '';
 			$change['new_url'] = wp_get_attachment_image_url( (int) $change['new_value'], 'full' ) ?: '';
 			$change['new_html'] = wp_get_attachment_image( (int) $change['new_value'], 'large', false, array( 'loading' => 'eager' ) );
+			$change['old_html'] = wp_get_attachment_image( (int) $change['old_value'], 'large', false, array( 'loading' => 'eager' ) );
 		}
 		if ( 'gallery' === ( $change['type'] ?? '' ) ) {
-			$change['old_images'] = self::gallery_images( (array) ( $change['old_value'] ?? array() ) );
-			$change['new_images'] = self::gallery_images( (array) ( $change['new_value'] ?? array() ) );
+			$change['old_images'] = self::gallery_images( (array) ( $change['old_value'] ?? array() ), true );
+			$change['new_images'] = self::gallery_images( (array) ( $change['new_value'] ?? array() ), true );
 		}
 		return $change;
 	}

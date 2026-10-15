@@ -32,3 +32,12 @@ try {
 } finally {
 	delete_transient( $key );
 }
+
+$media_ids = get_posts( array( 'post_type' => 'attachment', 'post_mime_type' => 'image', 'posts_per_page' => 1, 'fields' => 'ids' ) );
+if ( $media_ids ) {
+	$gallery = new ReflectionMethod( PKCA_Content::class, 'gallery_images' );
+	$compact = $gallery->invoke( null, $media_ids );
+	$preview = $gallery->invoke( null, $media_ids, true );
+	$assert( ! isset( $compact[0]['preview_html'] ), 'Unchanged gallery fields do not carry extra preview HTML' );
+	$assert( str_contains( $preview[0]['preview_html'], '<img' ), 'Pending gallery changes include a responsive image preview' );
+}

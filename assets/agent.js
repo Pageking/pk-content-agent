@@ -341,23 +341,32 @@
 
   async function loadContext({ restorePreview = false } = {}) {
     try {
-      const hadPendingChanges = Boolean(state.context?.changes?.length);
+      const previous = state.context?.changes || [];
       state.context = await request(`context?post_id=${config.postId}`);
-      if (restorePreview && (hadPendingChanges || state.context.changes?.length)) {
-        sessionStorage.setItem('pkca-preview-resume', String(config.postId));
-        window.location.reload();
-        return;
+      if (restorePreview) {
+        const pending = state.context.changes || [];
+        const removed = previous.filter(item => !pending.some(change => previewKey(change) === previewKey(item))).map(reversePreviewChange);
+        const restored = [...removed, ...pending];
+        const applied = applyPreview(restored);
+        if (restored.some(item => !applied.has(previewKey(item)))) {
+          sessionStorage.setItem('pkca-preview-resume', String(config.postId));
+          window.location.reload();
+          return;
+        }
       }
       applyPreview(state.context.changes || []);
       renderChanges(state.context.changes || []);
       installLayoutButtons();
       installContentButtons();
+      if (restorePreview && state.activeLayout !== null) openLayoutEditor(state.activeLayout);
       if (sessionStorage.getItem('pkca-review-resume') === String(config.postId)) {
         sessionStorage.removeItem('pkca-review-resume');
         if (state.context.changes?.length) openChangesReview();
       }
+      return true;
     } catch (error) {
       addMessage(error.message, 'error');
+      return false;
     }
   }
 
@@ -1125,10 +1134,13 @@
       if (state.activeLayout === editorIndex) clearLayoutDraft();
       state.context.changes = data.changes || [];
       syncContextWithChanges(state.context.changes);
-      applyPreview(state.context.changes);
+      const applied = applyPreview(state.context.changes);
       renderChanges(state.context.changes);
       addMessage(data.queued === 0 && data.unchanged > 0 ? 'Deze wijziging stond al klaar; de pagina-preview is opnieuw gesynchroniseerd.' : confirmation, 'agent');
-      const requiresRefresh = state.layoutNeedsRefresh || edits.some(edit => edit.refresh || !['text', 'link', 'image'].includes(edit.type));
+      const requiresRefresh = state.layoutNeedsRefresh || edits.some(edit => {
+        const pending = state.context.changes.find(item => Number(item.section) === Number(edit.section) && item.field_path.join('.') === edit.field_path.join('.'));
+        return pending && !applied.has(previewKey(pending));
+      });
       if (keepEditor && state.activeLayout === editorIndex) {
         state.layoutNeedsRefresh ||= requiresRefresh;
         refreshOpenLayoutEditor(confirmation, edits);
@@ -1234,7 +1246,53 @@
     });
   }
 
+  function previewKey(item) {
+    return `${item.section}:${(item.field_path || []).join('.')}`;
+  }
+
+  function previewGallery(section, item) {
+    // PK's CTA image strip has image-only children and no slider lifecycle.
+    // Leave interactive or ambiguous galleries to the server-rendered fallback.
+    const galleries = Array.from(section.querySelectorAll('.cta-images'));
+    const oldKeys = (item.old_images || []).map(image => imageKeyFromUrl(image.url));
+    const newImages = item.new_images || [];
+    const newKeys = newImages.map(image => imageKeyFromUrl(image.url));
+    const cached = state.previewTargets.get(`gallery:${previewKey(item)}`);
+    const matches = cached?.node?.isConnected && section.contains(cached.node) ? [cached.node] : galleries.filter(gallery => {
+      const images = Array.from(gallery.querySelectorAll('img'));
+      const keys = images.map(image => imageKeyFromUrl(image.currentSrc || image.src));
+      return !gallery.textContent.trim() && Array.from(gallery.children).every(child => child.matches('img') || child.querySelectorAll('img').length === 1)
+        && (JSON.stringify(keys) === JSON.stringify(oldKeys) || JSON.stringify(keys) === JSON.stringify(newKeys));
+    });
+    if (matches.length !== 1) return null;
+    const gallery = matches[0];
+    const sample = gallery.firstElementChild || cached?.sample;
+    if (newImages.length && !sample) return null;
+    const replacements = newImages.map((image, index) => {
+      const current = gallery.children[index];
+      const currentImage = current?.matches('img') ? current : current?.querySelector('img');
+      if (currentImage && imageKeyFromUrl(currentImage.currentSrc || currentImage.src) === imageKeyFromUrl(image.url)) return current;
+      const template = document.createElement('template');
+      template.innerHTML = image.preview_html || '';
+      const img = template.content.querySelector('img');
+      if (!img) return null;
+      const wrapper = sample.cloneNode(true);
+      if (wrapper.matches('img')) return img;
+      wrapper.querySelector('img').replaceWith(img);
+      return wrapper;
+    });
+    if (replacements.some(image => !image)) return null;
+    state.previewTargets.set(`gallery:${previewKey(item)}`, { type: 'gallery', node: gallery, sample });
+    gallery.replaceChildren(...replacements);
+    return gallery;
+  }
+
   function applyPreview(items) {
+    const applied = new Set();
+    document.querySelectorAll('[data-pkca-preview]').forEach(element => {
+      element.classList.remove('pkca-preview-target');
+      element.removeAttribute('data-pkca-preview');
+    });
     items.forEach(item => {
 	  const section = getSectionByNumber(item.section);
       if (!section) return;
@@ -1247,6 +1305,7 @@
         const oldImageKey = imageKeyFromUrl(item.old_url || '');
         const existingImage = existingTarget?.node?.isConnected ? existingTarget.node : null;
         const image = existingImage || images.find(candidate => oldImageKey && imageKeyFromUrl(candidate.currentSrc || candidate.src) === oldImageKey)
+          || images.find(candidate => imageKeyFromUrl(candidate.currentSrc || candidate.src) === imageKeyFromUrl(item.new_url))
           || (images.length === 1 ? images[0] : null);
         if (image) {
           let previewImage = image;
@@ -1274,10 +1333,13 @@
           changedElement = previewImage;
           state.previewTargets.set(targetKey, { type: 'image', node: previewImage });
         }
+      } else if (item.type === 'gallery') {
+        changedElement = previewGallery(section, item);
       } else if (item.type === 'link') {
         const anchors = Array.from(section.querySelectorAll('a[href]'));
         const existingTarget = state.previewTargets.get(targetKey)?.node;
-        const anchor = existingTarget?.isConnected ? existingTarget : anchors.find(candidate => urlKey(candidate.href) === urlKey(item.old_value));
+        const anchor = existingTarget?.isConnected ? existingTarget : anchors.find(candidate => urlKey(candidate.href) === urlKey(item.old_value))
+          || anchors.find(candidate => urlKey(candidate.href) === urlKey(item.new_value));
         if (anchor) {
           anchor.setAttribute('href', item.new_value);
           changedElement = anchor;
@@ -1306,13 +1368,25 @@
         // changed by the previous preview. The original ACF value is retained
         // for undo, so it can no longer be used to find that node in the DOM.
         if (!changedElement && textNode?.isConnected && textNode.nodeType === Node.TEXT_NODE) {
-          const leading = textNode.nodeValue.match(/^\s*/)?.[0] || '';
-          const trailing = textNode.nodeValue.match(/\s*$/)?.[0] || '';
-          textNode.nodeValue = `${leading}${newText}${trailing}`;
-          changedElement = textNode.parentElement;
+          const rich = textNode.parentElement.closest('.pk-text, .wysiwyg, .wysiwyg-gaps');
+          if (rich && normalizeText(rich.textContent) === normalizeText(textNode.nodeValue)) {
+            rich.innerHTML = newHtml;
+            changedElement = rich;
+            state.previewTargets.set(targetKey, { type: 'text', node: rich });
+          } else {
+            const leading = textNode.nodeValue.match(/^\s*/)?.[0] || '';
+            const trailing = textNode.nodeValue.match(/\s*$/)?.[0] || '';
+            textNode.nodeValue = `${leading}${newText}${trailing}`;
+            changedElement = textNode.parentElement;
+          }
         }
         if (!changedElement && textNode?.nodeType === Node.ELEMENT_NODE) {
-          changedElement = updateSelectedElement(textNode, oldText, newText, newHtml) ? textNode : null;
+          if (textNode.matches('.pk-text, .wysiwyg, .wysiwyg-gaps')) {
+            textNode.innerHTML = newHtml;
+            changedElement = textNode;
+          } else {
+            changedElement = updateSelectedElement(textNode, normalizeText(textNode.textContent), newText, newHtml) ? textNode : null;
+          }
           textNode = null;
         }
 		if (!changedElement && hasHtmlMarkup(newHtml)) {
@@ -1327,7 +1401,7 @@
 		// After a server-rendered preview reload the intended element can already
 		// contain the new value. In that case do not replace another occurrence of
 		// the old value (for example the page title inside a breadcrumb).
-		if (!changedElement && !textNode) {
+		if (!changedElement && !textNode && normalizeText(newText)) {
 		  const newValueWalker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
 		  let newValueNode;
 		  while ((newValueNode = newValueWalker.nextNode())) {
@@ -1338,7 +1412,7 @@
 			state.previewTargets.set(targetKey, { type: 'text', node: newValueNode });
 		  }
 		}
-        if (!changedElement && !textNode) {
+        if (!changedElement && !textNode && oldText) {
           const walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
           while ((textNode = walker.nextNode())) {
             if (normalizeText(textNode.nodeValue) === oldText) break;
@@ -1354,10 +1428,12 @@
       }
 
       if (changedElement) {
+        applied.add(previewKey(item));
         changedElement.classList.add('pkca-preview-target');
         changedElement.setAttribute('data-pkca-preview', 'true');
       }
     });
+    return applied;
   }
 
   function previewButtonOption(section, item) {
@@ -1469,6 +1545,7 @@
   function imageKeyFromUrl(value) {
     return decodeURIComponent(filenameFromUrl(value))
       .replace(/-\d+x\d+(?=\.[^.]+$)/i, '')
+      .replace(/-scaled(?=\.[^.]+$)/i, '')
       .toLowerCase();
   }
 
@@ -1518,10 +1595,11 @@
       if (data.change && state.selectedTarget && Array.isArray(data.change.field_path)) {
         state.selectedTarget.fieldPath = data.change.field_path;
       }
+      let applied = new Set();
       if (Array.isArray(data.changes)) {
         state.context.changes = data.changes;
         syncContextWithChanges(data.changes);
-        applyPreview(data.changes);
+        applied = applyPreview(data.changes);
         renderChanges(data.changes);
       }
       if (data.change) {
@@ -1529,7 +1607,8 @@
         fileInput.value = '';
         clearSelection();
 		sessionStorage.setItem('pkca-preview-resume', String(config.postId));
-		window.location.reload();
+        if (!data.changes?.length || data.changes.some(item => !applied.has(previewKey(item)))) window.location.reload();
+        else sessionStorage.removeItem('pkca-preview-resume');
 		return;
       } else if (state.selection) {
         selection.hidden = false;
@@ -1684,12 +1763,28 @@
   }
 
   async function finish(action) {
+    const pending = state.context?.changes || [];
     setBusy(true);
     try {
       const data = await request(action, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ post_id: config.postId })
       });
-      sessionStorage.setItem('pkca-status', action === 'publish' ? `${data.published} wijziging(en) opgeslagen.` : 'Previewwijzigingen verwijderd.');
+      const preview = action === 'publish' ? pending : pending.map(reversePreviewChange);
+      const applied = applyPreview(preview);
+      const message = action === 'publish' ? `${data.published} wijziging(en) opgeslagen.` : 'Je aanpassingen zijn ongedaan gemaakt.';
+      if (preview.every(item => applied.has(previewKey(item)))) {
+        reviewDialog.close();
+        closeLayoutEditor(false);
+        state.previewTargets.clear();
+        if (!await loadContext()) {
+          sessionStorage.setItem('pkca-status', message);
+          window.location.reload();
+          return;
+        }
+        addMessage(message, 'agent');
+        return;
+      }
+      sessionStorage.setItem('pkca-status', message);
       const destination = action === 'publish' && data.url
         ? new URL(data.url, window.location.origin).pathname
         : window.location.pathname;
@@ -1697,25 +1792,46 @@
     } catch (error) {
       addMessage(error.message, 'error');
       setReviewError(error.message);
+    } finally {
       setBusy(false);
     }
+  }
+
+  function reversePreviewChange(item) {
+    return { ...item, old_value: item.new_value, new_value: item.old_value,
+      old_url: item.new_url, new_url: item.old_url, new_html: item.old_html,
+      old_images: item.new_images, new_images: item.old_images };
   }
 
 	async function discardChange(changeId) {
 	  if (!changeId) return;
 	  setBusy(true);
 	  try {
+		const item = state.context?.changes?.find(change => change.id === changeId);
 		await request('discard', {
 		  method: 'POST',
 		  headers: { 'Content-Type': 'application/json' },
 		  body: JSON.stringify({ post_id: config.postId, change_id: changeId })
 		});
+		if (item && applyPreview([reversePreviewChange(item)]).has(previewKey(item))) {
+		  const wasOpen = reviewDialog.open;
+		  if (!await loadContext()) { window.location.reload(); return; }
+		  setBusy(false);
+		  if (state.activeLayout !== null) openLayoutEditor(state.activeLayout);
+		  if (wasOpen) {
+		    if (state.context.changes?.length) { setBusy(false); openChangesReview(); }
+		    else reviewDialog.close();
+		  }
+		  addMessage('Deze aanpassing is ongedaan gemaakt.', 'agent');
+		  return;
+		}
 		if (reviewDialog.open) sessionStorage.setItem('pkca-review-resume', String(config.postId));
 		sessionStorage.setItem('pkca-status', 'Wijziging ongedaan gemaakt.');
 		window.location.reload();
 	  } catch (error) {
 		addMessage(error.message, 'error');
 		setReviewError(error.message);
+	  } finally {
 		setBusy(false);
 	  }
 	}
