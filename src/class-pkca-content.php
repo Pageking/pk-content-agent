@@ -515,6 +515,7 @@ final class PKCA_Content {
 			$change['new_html'] = wp_get_attachment_image( (int) $change['new_value'], 'large', false, array( 'loading' => 'eager' ) );
 		}
 		if ( 'gallery' === ( $change['type'] ?? '' ) ) {
+			$change['old_images'] = self::gallery_images( (array) ( $change['old_value'] ?? array() ) );
 			$change['new_images'] = self::gallery_images( (array) ( $change['new_value'] ?? array() ) );
 		}
 		return $change;

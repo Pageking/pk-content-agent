@@ -20,6 +20,7 @@
   root.className = 'pkca';
   root.innerHTML = `
     <div class="pkca__launcher">
+      <button class="pkca__review-return" type="button" hidden>Terug naar wijzigingen</button>
       <button class="pkca__toggle" type="button" aria-expanded="false" aria-controls="pkca-panel">Pagina aanpassen</button>
       <button class="pkca__icons-toggle" type="button" aria-label="Bewerkiconen verbergen" aria-pressed="true" title="Bewerkiconen verbergen"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="pkca__eye-slash" d="m3 3 18 18"/></svg></button>
     </div>
@@ -48,6 +49,13 @@
   const changes = root.querySelector('.pkca__changes');
   const layoutEditor = root.querySelector('.pkca__layout-editor');
   const selection = form.querySelector('.pkca__selection');
+  const reviewReturn = root.querySelector('.pkca__review-return');
+  const reviewDialog = document.createElement('dialog');
+  reviewDialog.className = 'pkca__review';
+  reviewDialog.setAttribute('aria-labelledby', 'pkca-review-title');
+  root.append(reviewDialog);
+  reviewReturn.addEventListener('click', openChangesReview);
+  reviewDialog.addEventListener('cancel', event => { if (state.busy) event.preventDefault(); });
 
   restoreHistory();
   restorePosition();
@@ -331,6 +339,10 @@
       renderChanges(state.context.changes || []);
       installLayoutButtons();
       installContentButtons();
+      if (sessionStorage.getItem('pkca-review-resume') === String(config.postId)) {
+        sessionStorage.removeItem('pkca-review-resume');
+        if (state.context.changes?.length) openChangesReview();
+      }
     } catch (error) {
       addMessage(error.message, 'error');
     }
@@ -1501,12 +1513,94 @@
       return;
     }
     changes.hidden = false;
-    changes.innerHTML = `<details class="pkca__change-details"><summary><strong><i aria-hidden="true"></i>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} klaar</strong><span>Bekijken</span></summary><div class="pkca__change-list">${items.map(item => `
-      <div class="pkca__change"><span>Sectie ${item.section} · ${escapeHtml(friendlyLabel(state.context?.sections?.find(section => Number(section.number) === Number(item.section))?.fields?.find(field => field.path.join('.') === item.field_path.join('.'))?.label || item.field_name))}</span><del>${escapeHtml(changeValueSummary(item.old_value, item.type))}</del><ins>${escapeHtml(changeValueSummary(item.new_value, item.type))}</ins><button type="button" class="pkca__change-discard" data-change-id="${escapeHtml(item.id || '')}">Deze wijziging verwerpen</button></div>`).join('')}</div></details>
-      <div class="pkca__actions"><button type="button" data-action="discard">Wijzigingen verwerpen</button><button type="button" data-action="publish">Wijzigingen opslaan</button></div>`;
-    changes.querySelector('[data-action=publish]').addEventListener('click', () => finish('publish'));
-    changes.querySelector('[data-action=discard]').addEventListener('click', () => finish('discard'));
-	changes.querySelectorAll('[data-change-id]').forEach(button => button.addEventListener('click', () => discardChange(button.dataset.changeId)));
+    changes.innerHTML = `<div class="pkca__pending-summary"><strong>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} klaar</strong><span>Nog niet opgeslagen</span></div><button type="button" class="pkca__review-open">Wijzigingen bekijken</button>`;
+    changes.querySelector('.pkca__review-open').addEventListener('click', openChangesReview);
+  }
+
+  function reviewField(item) {
+    const section = state.context?.sections?.find(section => Number(section.number) === Number(item.section));
+    const field = section?.fields?.find(field => field.path.join('.') === (item.field_path || []).join('.'));
+    return { section, field };
+  }
+
+  function reviewValue(item, side, field) {
+    const value = item[`${side}_value`];
+    if (item.type === 'image') {
+      const url = item[`${side}_url`];
+      return url ? `<img class="pkca__review-image" src="${escapeHtml(url)}" alt="${side === 'old' ? 'Huidige afbeelding' : 'Nieuwe afbeelding'}">` : '<span class="pkca__review-empty">Geen afbeelding</span>';
+    }
+    if (item.type === 'gallery') {
+      const images = item[`${side}_images`] || [];
+      return images.length ? `<ol class="pkca__review-gallery">${images.map((image, index) => `<li><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.title || '')}"><span>${index + 1}</span></li>`).join('')}</ol>` : '<span class="pkca__review-empty">Geen afbeeldingen</span>';
+    }
+    if (item.type === 'repeater' && Array.isArray(value)) {
+      return value.length ? `<ol class="pkca__review-rows">${value.map((row, index) => `<li><strong>Rij ${index + 1}</strong>${reviewRow(row, field?.row_fields || [])}</li>`).join('')}</ol>` : '<span class="pkca__review-empty">Geen rijen</span>';
+    }
+    let text = value;
+    if (item.type === 'boolean') text = value === true || value === 1 || value === '1' ? 'Aan' : 'Uit';
+    else if (field?.choices && Object.hasOwn(field.choices, String(value))) text = field.choices[String(value)];
+    if (text === '' || text === null || text === undefined) return '<span class="pkca__review-empty">Niet ingevuld</span>';
+    return `<div class="pkca__review-text">${escapeHtml(readableReviewText(text))}</div>`;
+  }
+
+  function readableReviewText(value) {
+    return stripHtml(String(value ?? '').replace(/<br\s*\/?>|<\/(?:p|li|div|h[1-6])>/gi, '\n')).trim();
+  }
+
+  function reviewRow(value, fields, path = []) {
+    if (value && typeof value === 'object' && value.url && (value.ID || value.id)) {
+      const definition = fields.find(field => field.path.join('.') === path.join('.'));
+      return `<div class="pkca__review-row-field"><span>${escapeHtml(friendlyLabel(definition?.label || 'Afbeelding'))}</span><img class="pkca__review-image" src="${escapeHtml(value.url)}" alt="${escapeHtml(value.alt || '')}"></div>`;
+    }
+    if (value && typeof value === 'object') {
+      return Object.entries(value).filter(([key]) => key !== 'acf_fc_layout').map(([key, item]) => reviewRow(item, fields, [...path, key])).join('');
+    }
+    const definition = fields.find(field => field.path.join('.') === path.join('.'));
+    const label = friendlyLabel(definition?.label || humanize(path[path.length - 1] || 'Waarde'));
+    const text = definition?.choices?.[String(value)] ?? readableReviewText(value);
+    return `<div class="pkca__review-row-field"><span>${escapeHtml(label)}</span><div>${escapeHtml(text || 'Niet ingevuld')}</div></div>`;
+  }
+
+  function openChangesReview() {
+    if (state.busy) return;
+    const items = state.context?.changes || [];
+    if (!items.length) return;
+    captureLayoutDraft();
+    reviewReturn.hidden = true;
+    document.querySelectorAll('.pkca-review-highlight').forEach(element => element.classList.remove('pkca-review-highlight'));
+    setOpen(true);
+    reviewDialog.innerHTML = `<header class="pkca__review-header"><div><h2 id="pkca-review-title">Controleer je wijzigingen</h2><p>${items.length} wijziging${items.length === 1 ? '' : 'en'} · nog niet opgeslagen</p></div><button type="button" class="pkca__review-close" aria-label="Wijzigingenoverzicht sluiten">×</button></header>
+      <div class="pkca__review-body"><p class="pkca__review-explanation">De nieuwe versie is alleen voor jou zichtbaar. Pas na opslaan zien bezoekers je wijzigingen.</p>
+      ${items.map((item, index) => {
+        const { section, field } = reviewField(item);
+        return `<article class="pkca__review-card"><header><div><span>${escapeHtml(section?.label || `Onderdeel ${item.section}`)}</span><h3>${escapeHtml(friendlyLabel(field?.label || item.field_name))}</h3></div><button type="button" data-review-locate="${index}">Bekijk op de pagina ↗</button></header>${field?.instructions || field?.group_instructions?.length ? `<p class="pkca__review-hint">${escapeHtml([...(field.group_instructions || []).map(group => group.text), field.instructions].filter(Boolean).join(' '))}</p>` : ''}<div class="pkca__review-comparison"><section><h4>Nu online</h4>${reviewValue(item, 'old', field)}</section><section><h4>Na opslaan</h4>${reviewValue(item, 'new', field)}</section></div><footer><button type="button" data-review-discard="${escapeHtml(item.id || '')}">Deze wijziging verwijderen</button></footer></article>`;
+      }).join('')}</div>
+      <div class="pkca__review-status" role="status" aria-live="polite" hidden></div>
+      <footer class="pkca__review-footer"><button type="button" data-review-close>Verder aanpassen</button><div><button type="button" data-review-discard-all>Alles ongedaan maken</button><button type="button" class="pkca__review-publish" data-review-publish>${items.length === 1 ? 'Wijziging opslaan' : `${items.length} wijzigingen opslaan`}</button></div></footer>`;
+    reviewDialog.querySelector('.pkca__review-close').addEventListener('click', () => reviewDialog.close());
+    reviewDialog.querySelector('[data-review-close]').addEventListener('click', () => reviewDialog.close());
+    reviewDialog.querySelector('[data-review-discard-all]').addEventListener('click', () => finish('discard'));
+    reviewDialog.querySelector('[data-review-publish]').addEventListener('click', () => finish('publish'));
+    reviewDialog.querySelectorAll('[data-review-discard]').forEach(button => button.addEventListener('click', () => discardChange(button.dataset.reviewDiscard)));
+    reviewDialog.querySelectorAll('[data-review-locate]').forEach(button => button.addEventListener('click', () => {
+      const item = items[Number(button.dataset.reviewLocate)];
+      const section = getSectionByNumber(item.section);
+      if (!section) { setReviewError('Dit onderdeel is niet zichtbaar op de pagina. Je kunt de wijziging wel in dit overzicht controleren.'); return; }
+      reviewDialog.close();
+      setOpen(false);
+      reviewReturn.hidden = false;
+      section.classList.add('pkca-review-highlight');
+      section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      reviewReturn.focus();
+    }));
+    if (!reviewDialog.open) reviewDialog.showModal();
+  }
+
+  function setReviewError(message) {
+    const status = reviewDialog.querySelector('.pkca__review-status');
+    if (!status) return;
+    status.textContent = message;
+    status.hidden = false;
   }
 
   function changeValueSummary(value, type) {
@@ -1529,6 +1623,7 @@
       window.location.assign(destination);
     } catch (error) {
       addMessage(error.message, 'error');
+      setReviewError(error.message);
       setBusy(false);
     }
   }
@@ -1542,10 +1637,12 @@
 		  headers: { 'Content-Type': 'application/json' },
 		  body: JSON.stringify({ post_id: config.postId, change_id: changeId })
 		});
+		if (reviewDialog.open) sessionStorage.setItem('pkca-review-resume', String(config.postId));
 		sessionStorage.setItem('pkca-status', 'Wijziging ongedaan gemaakt.');
 		window.location.reload();
 	  } catch (error) {
 		addMessage(error.message, 'error');
+		setReviewError(error.message);
 		setBusy(false);
 	  }
 	}
@@ -1679,7 +1776,7 @@
     state.busy = busy;
     if (busy) {
       layoutEditor.setAttribute('aria-busy', 'true');
-      const controls = [...form.querySelectorAll('button, input, textarea'), ...layoutEditor.querySelectorAll('button, input, select, textarea, [contenteditable]')];
+      const controls = [...form.querySelectorAll('button, input, textarea'), ...layoutEditor.querySelectorAll('button, input, select, textarea, [contenteditable]'), ...reviewDialog.querySelectorAll('button')];
       controls.forEach(control => {
         state.busyControls.set(control, { disabled: control.disabled, editable: control.getAttribute('contenteditable') });
         if (control.hasAttribute('contenteditable')) control.setAttribute('contenteditable', 'false');

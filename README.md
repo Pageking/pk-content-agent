@@ -41,7 +41,8 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Met **Aanwijzen** kan een zichtbare tekst, knop of afbeelding aan het exacte ACF-veld worden gekoppeld.
 - Het venster kan via de titelbalk worden versleept en met de minknop worden ingeklapt.
 - Wijzigingen zijn eerst een gebruikersgebonden preview van twee uur.
-- **Wijzigingen opslaan** en **Alles ongedaan maken** zijn expliciete handelingen.
+- **Wijzigingen bekijken** opent een ruim overzicht met huidige en nieuwe inhoud, afbeeldingen en galerijvolgorde. Per wijziging kun je het onderdeel op de pagina bekijken of de wijziging verwijderen.
+- Opslaan en alles ongedaan maken zijn expliciete handelingen in het wijzigingenoverzicht. Fouten blijven daar zichtbaar.
 - Alleen bevoegde gebruikers krijgen toegang: `edit_post` op gewone pagina’s en `edit_posts` op post-typearchieven.
 - Post types kunnen via de instellingen volledig van de frontend-assistent worden uitgesloten.
 - Dynamisch gekoppelde berichten en Gravity Forms-formulieren krijgen waar mogelijk een directe beheerlink; beide soorten links zijn afzonderlijk uit te schakelen via de instellingen.
