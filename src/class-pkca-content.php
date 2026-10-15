@@ -12,6 +12,24 @@ final class PKCA_Content {
 		return self::$suppress_preview;
 	}
 
+	private static function saved_rows( array $target ): mixed {
+		// Inspection needs the saved source, while templates need the preview.
+		// ACF caches nested and formatted values too: reading the source into
+		// that shared store makes subsequent get_sub_field() return old rows.
+		$store = acf_get_store( 'values' );
+		$cached_values = $store->get_data();
+		$was_suppressed = self::$suppress_preview;
+		$store->reset();
+		self::$suppress_preview = true;
+		try {
+			return get_field( $target['field'], $target['acf_id'] );
+		} finally {
+			self::$suppress_preview = $was_suppressed;
+			$store->reset();
+			$store->set( $cached_values );
+		}
+	}
+
 	public static function inspect( int|string $post_id ): array|WP_Error {
 		if ( ! function_exists( 'get_field' ) ) {
 			return new WP_Error( 'pkca_acf_missing', 'ACF is niet actief.', array( 'status' => 500 ) );
@@ -21,9 +39,7 @@ final class PKCA_Content {
 		if ( is_wp_error( $target ) ) {
 			return $target;
 		}
-		self::$suppress_preview = true;
-		$rows = get_field( $target['field'], $target['acf_id'] );
-		self::$suppress_preview = false;
+		$rows = self::saved_rows( $target );
 		if ( ! is_array( $rows ) ) {
 			$rows = array();
 		}
@@ -921,9 +937,7 @@ final class PKCA_Content {
 		if ( is_wp_error( $target ) ) {
 			return $target;
 		}
-		self::$suppress_preview = true;
-		$current_rows = get_field( $target['field'], $target['acf_id'] );
-		self::$suppress_preview = false;
+		$current_rows = self::saved_rows( $target );
 		$current_modified = self::target_version( $target, is_array( $current_rows ) ? $current_rows : array() );
 		$base_modified    = (string) ( $changes[0]['base_modified'] ?? '' );
 		if ( $base_modified && $base_modified !== $current_modified ) {
@@ -938,9 +952,7 @@ final class PKCA_Content {
 			wp_save_post_revision( (int) $target['acf_id'] );
 		}
 
-		self::$suppress_preview = true;
-		$rows = get_field( $target['field'], $target['acf_id'] );
-		self::$suppress_preview = false;
+		$rows = self::saved_rows( $target );
 		if ( ! is_array( $rows ) ) {
 			return new WP_Error( 'pkca_publish_failed', 'De ACF-content kon niet worden gelezen.', array( 'status' => 500 ) );
 		}
@@ -954,9 +966,7 @@ final class PKCA_Content {
 		if ( function_exists( 'acf_flush_value_cache' ) ) {
 			acf_flush_value_cache( $target['acf_id'], $target['field'] );
 		}
-		self::$suppress_preview = true;
-		$stored_rows = get_field( $target['field'], $target['acf_id'] );
-		self::$suppress_preview = false;
+		$stored_rows = self::saved_rows( $target );
 
 		if ( ! is_array( $stored_rows ) || ! self::changes_are_stored( $stored_rows, $changes ) ) {
 			update_field( $target['field'], $original_rows, $target['acf_id'] );
