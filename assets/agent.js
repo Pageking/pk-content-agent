@@ -11,12 +11,18 @@
   const positionKey = `pkca-position-${config.postId}`;
   const sizeKey = `pkca-size-${config.postId}`;
   const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, layoutNeedsRefresh: false, previewTargets: new Map(), drafts: {}, busy: false, busyControls: new Map() };
+  const iconVisibilityKey = 'pkca-icons-visible';
+  let iconsVisible = true;
+  try { iconsVisible = sessionStorage.getItem(iconVisibilityKey) !== 'false'; } catch (_) {}
   const draftKey = `pkca-drafts-${config.postId}`;
   try { state.drafts = JSON.parse(sessionStorage.getItem(draftKey) || '{}'); } catch (_) {}
   const root = document.createElement('div');
   root.className = 'pkca';
   root.innerHTML = `
-    <button class="pkca__toggle" type="button" aria-expanded="false" aria-controls="pkca-panel">Pagina aanpassen</button>
+    <div class="pkca__launcher">
+      <button class="pkca__toggle" type="button" aria-expanded="false" aria-controls="pkca-panel">Pagina aanpassen</button>
+      <button class="pkca__icons-toggle" type="button" aria-label="Bewerkiconen verbergen" aria-pressed="true" title="Bewerkiconen verbergen"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="pkca__eye-slash" d="m3 3 18 18"/></svg></button>
+    </div>
     <aside class="pkca__panel" id="pkca-panel" aria-label="Content-assistent" hidden>
       <header class="pkca__header"><div class="pkca__heading"><strong>Content-assistent</strong><small>${escapeHtml(config.title)}</small></div><div class="pkca__window-actions"><button class="pkca__restart" type="button" aria-label="Nieuwe chat" title="Nieuwe chat">↻</button><button class="pkca__collapse" type="button" aria-label="Inklappen">−</button><button class="pkca__close" type="button" aria-label="Sluiten">×</button></div></header>
       <div class="pkca__messages" aria-live="polite"></div>
@@ -34,6 +40,7 @@
 
   const panel = root.querySelector('.pkca__panel');
   const toggle = root.querySelector('.pkca__toggle');
+  const iconsToggle = root.querySelector('.pkca__icons-toggle');
   const messages = root.querySelector('.pkca__messages');
   const form = root.querySelector('.pkca__form');
   const textarea = form.querySelector('textarea');
@@ -45,6 +52,13 @@
   restoreHistory();
   restorePosition();
   restoreSize();
+
+  iconsToggle.addEventListener('click', () => {
+    iconsVisible = !iconsVisible;
+    updateIconVisibility();
+    try { sessionStorage.setItem(iconVisibilityKey, String(iconsVisible)); } catch (_) {}
+  });
+  updateIconVisibility();
 
   toggle.addEventListener('click', () => setOpen(!state.open));
   root.querySelector('.pkca__close').addEventListener('click', event => {
@@ -78,6 +92,14 @@
     }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-hidden'] });
   }
   loadContext();
+
+  function updateIconVisibility() {
+    root.classList.toggle('pkca--icons-hidden', !iconsVisible);
+    const label = iconsVisible ? 'Bewerkiconen verbergen' : 'Bewerkiconen tonen';
+    iconsToggle.setAttribute('aria-label', label);
+    iconsToggle.setAttribute('aria-pressed', String(iconsVisible));
+    iconsToggle.title = label;
+  }
 
   function setOpen(open) {
     state.open = open;

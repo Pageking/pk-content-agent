@@ -29,6 +29,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Houdt tekstinvoer vast bij mediawijzigingen en voorkomt dubbele rijacties bij herhaald openen.
 - Zet een batch velden als geheel klaar en blokkeert overschrijven als de broncontent ondertussen verandert.
 - Bewerkiconen houden hun toegankelijke naam zonder zichtbare labeltekst naast het icoon.
+- Een oogknop naast **Pagina aanpassen** toont of verbergt alle potloodjes, verwijzingen naar gedeelde layouts en beheerlinks. De keuze blijft bewaard tijdens navigeren en herladen binnen dezelfde browsertab.
 - Ondersteunt ook post-typearchieven waarvan de automatische optionspagina het veld `{post_type}_content_repeater` bevat, zoals `location_content_repeater`.
 - Gebruikt een vaste bedrijfsbriefing voor doelgroep, diensten, positionering, tone of voice, terminologie en controleerbare claims.
 - Kan maximaal tien geselecteerde bronpagina’s als aanvullende bedrijfscontext gebruiken.
