@@ -350,7 +350,6 @@ final class PKCA_Content {
 			return $value;
 		}
 		foreach ( self::get_changes( $post_id ) as $change ) {
-			$layout_marker = '_flex_content_' . (int) $change['layout_index'] . '_';
 			$field_instance = (string) ( $acf_field['name'] ?? '' );
 			$field_path = array_map( 'strval', (array) ( $change['field_path'] ?? array() ) );
 			$link_property = $field_path ? end( $field_path ) : '';
@@ -368,7 +367,7 @@ final class PKCA_Content {
 				return $value;
 			}
 			$instance_suffix = '_' . implode( '_', array_map( 'strval', (array) ( $change['field_path'] ?? array() ) ) );
-			if ( ! empty( $change['field_key'] ) && $change['field_key'] === $acf_field['key'] && ( ! str_contains( $field_instance, '_flex_content_' ) || str_contains( $field_instance, $layout_marker ) ) && str_ends_with( $field_instance, $instance_suffix ) ) {
+			if ( ! empty( $change['field_key'] ) && $change['field_key'] === $acf_field['key'] && ( ! str_contains( $field_instance, '_flex_content_' ) || str_contains( $field_instance, $section_marker ) ) && str_ends_with( $field_instance, $instance_suffix ) ) {
 				return 'repeater' === ( $acf_field['type'] ?? '' )
 					? self::repeater_rows_for_acf_load( (array) $change['new_value'], (array) ( $acf_field['sub_fields'] ?? array() ) )
 					: $change['new_value'];

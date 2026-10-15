@@ -228,32 +228,38 @@
 	return getSectionEntries().map(entry => entry.element);
 	}
 
-	function getSectionEntries() {
-	  if (!state.context?.sections) return [];
-	  const containers = Array.from(document.querySelectorAll('.flex-repeater > .flex-content'));
-	  if (!containers.length) return [];
-	  const topContexts = state.context.sections.filter(section => !section.nested);
-	  const nestedContexts = state.context.sections.filter(section => section.nested);
-	  const entries = [];
-	  const topElements = Array.from(containers[0].children);
-	  const unusedTopElements = new Set(topElements);
-	  topContexts.forEach(context => {
-		const element = findLayoutElement(context, topElements, unusedTopElements);
-		if (!element) return;
-		unusedTopElements.delete(element);
-		entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
-	  });
-	  const nestedElements = containers.slice(1).flatMap(container => Array.from(container.children));
-	  const unusedElements = new Set(nestedElements);
-	  nestedContexts.forEach(context => {
-		const element = findLayoutElement(context, nestedElements, unusedElements);
-		if (!element) return;
-		unusedElements.delete(element);
-		entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
-	  });
-	  entries.forEach(entry => { entry.element.dataset.pkcaSectionNumber = String(entry.context.number); });
-	  return entries;
-	}
+  function getSectionEntries() {
+    if (!state.context?.sections) return [];
+    const containers = Array.from(document.querySelectorAll('.flex-repeater > .flex-content'));
+    if (!containers.length) return [];
+    const topContexts = state.context.sections.filter(section => !section.nested);
+    const nestedContexts = state.context.sections.filter(section => section.nested);
+    const entries = [];
+    const repeater = containers[0].parentElement;
+    const rowContainers = containers.filter(container => container.parentElement === repeater);
+    const usedElements = new Set();
+    topContexts.forEach(context => {
+      const container = rowContainers[Number(context.row_index)];
+      const candidates = container ? Array.from(container.children) : [];
+      const unused = new Set(candidates.filter(element => !usedElements.has(element)));
+      const element = findLayoutElement(context, candidates, unused);
+      if (!element) return;
+      usedElements.add(element);
+      entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+    });
+    nestedContexts.forEach(context => {
+      const parent = entries.find(entry => Number(entry.context.number) === Number(context.parent_section));
+      if (!parent) return;
+      const candidates = Array.from(parent.element.querySelectorAll('.flex-repeater > .flex-content > *'));
+      const unused = new Set(candidates.filter(element => !usedElements.has(element)));
+      const element = findLayoutElement(context, candidates, unused);
+      if (!element) return;
+      usedElements.add(element);
+      entries.push({ element, context, contextIndex: state.context.sections.indexOf(context) });
+    });
+    entries.forEach(entry => { entry.element.dataset.pkcaSectionNumber = String(entry.context.number); });
+    return entries;
+  }
 
 	function findLayoutElement(context, candidates, unused) {
 	  const layout = String(context.layout || '').toLowerCase();
@@ -308,7 +314,8 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'pkca__layout-button';
-      button.innerHTML = '<span aria-hidden="true">✎</span><span class="screen-reader-text">Layout bewerken</span>';
+      button.setAttribute('aria-label', 'Layout bewerken');
+      button.innerHTML = '<span aria-hidden="true">✎</span>';
 	  button.title = `${humanize(layout.layout)} bewerken`;
       button.addEventListener('click', event => {
         event.preventDefault();
@@ -358,7 +365,8 @@
       button.href = `${config.formsEditUrl}${formId}`;
       button.target = '_blank';
       button.rel = 'noopener';
-      button.innerHTML = '<svg class="pkca__link-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M10.6 13.4a2 2 0 0 0 2.8 0l3-3a2 2 0 1 0-2.8-2.8l-1.2 1.2M13.4 10.6a2 2 0 0 0-2.8 0l-3 3a2 2 0 1 0 2.8 2.8l1.2-1.2"/></svg><span class="screen-reader-text">Formulier bewerken</span>';
+      button.innerHTML = '<svg class="pkca__link-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M10.6 13.4a2 2 0 0 0 2.8 0l3-3a2 2 0 1 0-2.8-2.8l-1.2 1.2M13.4 10.6a2 2 0 0 0-2.8 0l-3 3a2 2 0 1 0 2.8 2.8l1.2-1.2"/></svg>';
+      button.setAttribute('aria-label', 'Formulier bewerken');
       button.title = `Formulier ${formId} bewerken`;
       button.addEventListener('click', event => event.stopPropagation());
       root.append(button);
@@ -418,7 +426,8 @@
       button.href = target.edit_url;
       button.target = '_blank';
       button.rel = 'noopener';
-      button.innerHTML = '<svg class="pkca__link-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M10.6 13.4a2 2 0 0 0 2.8 0l3-3a2 2 0 1 0-2.8-2.8l-1.2 1.2M13.4 10.6a2 2 0 0 0-2.8 0l-3 3a2 2 0 1 0 2.8 2.8l1.2-1.2"/></svg><span class="screen-reader-text">Gekoppelde content bewerken</span>';
+      button.innerHTML = '<svg class="pkca__link-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M10.6 13.4a2 2 0 0 0 2.8 0l3-3a2 2 0 1 0-2.8-2.8l-1.2 1.2M13.4 10.6a2 2 0 0 0-2.8 0l-3 3a2 2 0 1 0 2.8 2.8l1.2-1.2"/></svg>';
+      button.setAttribute('aria-label', 'Gekoppelde content bewerken');
       button.title = `${target.title || 'Gekoppelde content'} bewerken`;
       button.addEventListener('click', event => event.stopPropagation());
       root.append(button);

@@ -21,7 +21,9 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 
 ## Functionaliteit
 
-- Inventariseert `content_repeater → flex_content` zonder layouts hard te coderen.
+- Inventariseert alle rijen van `content_repeater → flex_content` zonder layouts hard te coderen.
+- Koppelt layoutpotloodjes en previews aan de juiste ACF-rij; geneste layouts blijven bij hun bovenliggende layout.
+- Bewerkiconen houden hun toegankelijke naam zonder zichtbare labeltekst naast het icoon.
 - Ondersteunt ook post-typearchieven waarvan de automatische optionspagina het veld `{post_type}_content_repeater` bevat, zoals `location_content_repeater`.
 - Gebruikt een vaste bedrijfsbriefing voor doelgroep, diensten, positionering, tone of voice, terminologie en controleerbare claims.
 - Kan maximaal tien geselecteerde bronpagina’s als aanvullende bedrijfscontext gebruiken.
