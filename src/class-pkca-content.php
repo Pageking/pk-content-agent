@@ -664,7 +664,7 @@ final class PKCA_Content {
 			return (bool) $value;
 		}
 		if ( 'number' === $type ) {
-			return is_numeric( $value ) ? $value + 0 : '';
+			return is_numeric( $value ) ? $value : '';
 		}
 		return is_scalar( $value ) || null === $value ? (string) $value : '';
 	}
@@ -749,7 +749,7 @@ final class PKCA_Content {
 			$new_value = wp_kses_post( (string) ( $change['value'] ?? '' ) );
 		}
 		if ( 'number' === $target['field']['type'] ) {
-			$new_value = is_numeric( $change['value'] ?? null ) ? ( $change['value'] + 0 ) : null;
+			$new_value = is_numeric( $change['value'] ?? null ) ? $change['value'] : null;
 			if ( null === $new_value ) {
 				return new WP_Error( 'pkca_invalid_number', 'Vul een geldig getal in.', array( 'status' => 422 ) );
 			}
@@ -818,7 +818,12 @@ final class PKCA_Content {
 	}
 
 	private static function sanitize_nested( array $value ): array {
-		foreach ( $value as $key => $item ) $value[ $key ] = is_array( $item ) ? self::sanitize_nested( $item ) : ( is_numeric( $item ) ? $item + 0 : wp_kses_post( (string) $item ) );
+		// Numeric-looking strings can be formatted content ("1.700", "9.00",
+		// phone numbers). Sanitizing one row must not reformat every other row.
+		foreach ( $value as $key => $item ) {
+			$value[ $key ] = is_array( $item ) ? self::sanitize_nested( $item )
+				: ( is_string( $item ) ? wp_kses_post( $item ) : $item );
+		}
 		return $value;
 	}
 
