@@ -17,7 +17,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    assert.equal(new URL(url,w.location.origin).searchParams.get('post_id'),target);
    return {ok:true,json:async()=>structuredClone(context)};
   };
-  w.eval(fs.readFileSync(path.resolve(__dirname,'../assets/agent.js'),'utf8').replace('window.location.assign(destination);','window.testNavigation=destination;'));
+  w.eval(fs.readFileSync(path.resolve(__dirname,'../assets/agent.js'),'utf8').replaceAll('window.location.assign(destination);','window.testNavigation=destination;'));
   await new Promise(r=>setTimeout(r,20));
   return dom;
  };

@@ -40,7 +40,7 @@ define( 'PK_CONTENT_AGENT_OPENAI_API_KEY', '...' );
 - Meerdere opdrachten worden zonder paginaherlading direct als visuele preview gestapeld.
 - Met **Aanwijzen** kan een zichtbare tekst, knop of afbeelding aan het exacte ACF-veld worden gekoppeld.
 - Het venster kan via de titelbalk worden versleept en met de minknop worden ingeklapt.
-- Wijzigingen zijn eerst een gebruikersgebonden preview van twee uur.
+- Wijzigingen worden per gebruiker bewaard totdat ze online worden gezet of ongedaan worden gemaakt. Ze blijven beschikbaar na het legen van de cache.
 - **Wijzigingen bekijken** opent een ruim overzicht met huidige en nieuwe inhoud, afbeeldingen en galerijvolgorde. Per wijziging kun je het onderdeel op de pagina bekijken of de wijziging verwijderen.
 - Opslaan en alles ongedaan maken zijn expliciete handelingen in het wijzigingenoverzicht. Fouten blijven daar zichtbaar.
 - Alleen bevoegde gebruikers krijgen toegang: `edit_post` op gewone pagina’s en `edit_posts` op post-typearchieven.
@@ -65,3 +65,19 @@ wp eval-file wp-content/plugins/pk-content-agent-main/tests/content-regressions.
 ```
 
 De controle maakt een tijdelijke conceptpagina, test batches, publiceren, conflicten, links en gedeelde bronverwijzingen, en verwijdert de testpagina na afloop. Op Local moet wp-cli het juiste sitesocket gebruiken.
+
+## Lokaal te testen bewerkflow
+
+- **Tekst bewerken** markeert herkenbare tekstvelden op de pagina. Klik op de tekst, pas die aan en kies **Klaar**. **Annuleren** of Escape herstelt de invoer. Dubbelzinnige teksten en gedeelde bronlayouts worden via de layout-editor aangepast.
+- **Wijzigingen controleren** toont de vergelijking; pas **Online zetten** publiceert de inhoud. De actie **Ongedaan maken** verwijdert een klaarstaande veldwijziging.
+- Galerijen hebben positienummers, knoppen voor links/rechts en **Vervangen**, naast slepen, uploaden en verwijderen. Vervangen behoudt de positie.
+- **Vorige versies** gebruikt native WordPress-revisies. Bij het online zetten worden de bestaande ACF-inhoud en afbeeldingsvolgorde als revisie bewaard en gecontroleerd. Terugzetten herstelt alleen de door deze tool beheerde pagina-inhoud en bewaart eerst de huidige inhoud als revisie.
+- Voor ACF-optiepagina's en archieven bestaan geen native WordPress-revisies. De interface meldt dit. Klaarstaande wijzigingen moeten eerst worden gepubliceerd of ongedaan gemaakt voordat herstel mogelijk is.
+
+Aanvullende lokale controles: `tests/revisions.php` met wp-cli en `npm run --prefix tests test:workflow`. Deze gebruiken tijdelijke testgegevens; de revisietest ruimt haar pagina's en afbeeldingen op.
+
+Inline bewerken gebruikt de ACF-veldinhoud in een schoon bewerkoppervlak. Door animaties gegenereerde letter-, woord- en regelwrappers worden niet opgeslagen. Annuleren herstelt het oorspronkelijke DOM-element; bij opslaan blijft de nieuwe tekst onafhankelijk van de oude animatie-instantie. `tests/inline-animation.cjs` controleert dit inclusief resize, echte regeleinden en tekstopmaak.
+
+Versiegeschiedenis is bereikbaar via de knop **Versies**. Kies **Bekijk verschillen** om de huidige inhoud naast de gekozen WordPress-revisie te zien, inclusief afbeeldingen en galerijvolgorde. Alleen verschillen verschijnen. Pas **Deze versie terugzetten** publiceert de eerdere inhoud; de huidige inhoud wordt eerst als revisie bewaard.
+
+Terugdraaien gebeurt uitsluitend via **Wijzigingen controleren**, per veld of met **Alles ongedaan maken**. De losse terugdraaiknop in het chatvenster is verwijderd. Klaarstaande inhoud krijgt een vaste mintgroene markering, ook na het opnieuw opbouwen van geanimeerde titels.

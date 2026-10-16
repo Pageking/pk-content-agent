@@ -4,12 +4,12 @@ defined( 'ABSPATH' ) || exit;
 
 final class PKCA_REST {
 	public function register_routes(): void {
-		foreach ( array( 'context', 'media', 'chat', 'change', 'upload', 'publish', 'discard' ) as $route ) {
+		foreach ( array( 'context', 'media', 'chat', 'change', 'upload', 'publish', 'discard', 'revisions', 'restore' ) as $route ) {
 			register_rest_route(
 				'pk-content-agent/v1',
 				'/' . $route,
 				array(
-					'methods'             => in_array( $route, array( 'context', 'media' ), true ) ? WP_REST_Server::READABLE : WP_REST_Server::CREATABLE,
+					'methods'             => in_array( $route, array( 'context', 'media', 'revisions' ), true ) ? WP_REST_Server::READABLE : WP_REST_Server::CREATABLE,
 					'callback'            => array( $this, $route ),
 					'permission_callback' => array( $this, 'can_edit' ),
 				)
@@ -872,6 +872,18 @@ final class PKCA_REST {
 		}
 		PKCA_Content::discard( $post_id );
 		return rest_ensure_response( array( 'discarded' => true, 'changes' => array() ) );
+	}
+
+	public function revisions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$result = $request->get_param( 'revision_id' )
+			? PKCA_Revisions::comparison( $this->request_target( $request ), absint( $request->get_param( 'revision_id' ) ) )
+			: PKCA_Revisions::listing( $this->request_target( $request ) );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function restore( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$result = PKCA_Revisions::restore( $this->request_target( $request ), absint( $request->get_param( 'revision_id' ) ), (string) $request->get_param( 'base_version' ) );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 
 	private function request_target( WP_REST_Request $request ): int|string {

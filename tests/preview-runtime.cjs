@@ -27,7 +27,7 @@ const html='<main><div class="flex-repeater"><div class="flex-content"><div clas
   throw Error(url);
  };
  w.PKContentAgent={restUrl:'/wp-json/pk-content-agent/v1/',postId:context.post.id,title:'Test'};
- w.eval(fs.readFileSync(base+'assets/agent.js','utf8').replaceAll('window.location.reload();','window.testReloads=(window.testReloads||0)+1;').replace('window.location.assign(destination);','window.testNavigations=(window.testNavigations||0)+1;').replace(/\}\)\(\);\s*$/,'window.testApi={state,openLayoutEditor,queueLayoutChanges,applyPreview,previewKey,finish,discardChange,getSectionByNumber,reversePreviewChange};})();'));
+ w.eval(fs.readFileSync(base+'assets/agent.js','utf8').replaceAll('window.location.reload();','window.testReloads=(window.testReloads||0)+1;').replaceAll('window.location.assign(destination);','window.testNavigations=(window.testNavigations||0)+1;').replace(/\}\)\(\);\s*$/,'window.testApi={state,openLayoutEditor,queueLayoutChanges,applyPreview,previewKey,finish,discardChange,getSectionByNumber,reversePreviewChange};})();'));
  await new Promise(r=>setTimeout(r,30));const api=w.testApi;
  const section=api.getSectionByNumber(gallery.section);const strip=section.querySelector('.cta-images');assert(strip);
  const identity=strip;const unrelated=section.querySelector('.proces-col');const initialFirst=strip.firstElementChild;
