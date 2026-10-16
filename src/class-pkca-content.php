@@ -830,11 +830,27 @@ final class PKCA_Content {
 			'field_name'   => $target['field']['name'],
 			'field_key'    => (string) ( $target['field']['key'] ?? '' ),
 			'type'         => $target['field']['type'],
-			'old_value'    => $target['field']['value'],
+			'old_value'    => $target['field']['original_value'] ?? $target['field']['value'],
 			'new_value'    => $new_value,
 			'created_at'   => current_time( 'mysql', true ),
 			'base_modified'=> (string) $inspection['post']['modified'],
 		);
+
+		// Keep a parent repeater edit and later inline edits in one coherent draft.
+		foreach ( $changes as $index => $existing ) {
+			if ( $existing['row_index'] !== $new_change['row_index'] || $existing['layout_index'] !== $new_change['layout_index'] ) continue;
+			$parent_path = $existing['field_path'];
+			$child_path = $new_change['field_path'];
+			if ( 'repeater' === $existing['type'] && count( $child_path ) > count( $parent_path ) && array_slice( $child_path, 0, count( $parent_path ) ) === $parent_path ) {
+				$replacement = in_array( $new_change['type'], array( 'image', 'gallery' ), true ) ? self::format_preview_value( $new_change ) : $new_value;
+				self::set_nested_value( $existing['new_value'], array_slice( $child_path, count( $parent_path ) ), $replacement );
+				$changes[ $index ] = $existing;
+				if ( ! self::save_changes( $post_id, $changes ) ) return new WP_Error( 'pkca_draft_failed', 'Je aanpassing kon niet worden bewaard. Probeer het opnieuw.', array( 'status' => 500 ) );
+				return $existing;
+			}
+			if ( 'repeater' === $new_change['type'] && count( $parent_path ) > count( $child_path ) && array_slice( $parent_path, 0, count( $child_path ) ) === $child_path ) unset( $changes[ $index ] );
+		}
+		$changes = array_values( $changes );
 
 		foreach ( $changes as $index => $existing ) {
 			if ( $existing['row_index'] === $new_change['row_index'] && $existing['layout_index'] === $new_change['layout_index'] && $existing['field_path'] === $new_change['field_path'] ) {

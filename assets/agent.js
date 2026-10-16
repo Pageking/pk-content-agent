@@ -123,7 +123,7 @@
       (context.fields || []).filter(field => field.editable && field.type === 'text').forEach(field => {
         const wanted = normalizeText(stripHtml(String(field.value ?? '').replace(/<br\s*\/?>/gi, '\n')));
         if (!wanted) return;
-        const candidates = [...element.querySelectorAll('.pk-heading-text,.pk-text,.wysiwyg,.wysiwyg-gaps,.subtitle,.sub-title,h1,h2,h3,h4,h5,h6,p')]
+        const candidates = [...element.querySelectorAll('.pk-heading-text,.pk-text,.wysiwyg,.wysiwyg-gaps,.subtitle,.sub-title,h1,h2,h3,h4,h5,h6,p,li,span,blockquote,figcaption')]
           .filter(node => !node.closest('nav,button,.pkca') && normalizeText(inlineVisibleText(node)) === wanted);
         const headings = candidates.filter(node => node.matches('.pk-heading-text'));
         const matches = headings.length ? headings : candidates;
@@ -821,6 +821,8 @@
     layoutEditor.onclick = event => {
       const button = event.target.closest('[data-repeater-action]');
       if (button) { event.preventDefault(); updateRepeater(button, layoutFields[Number(button.dataset.fieldIndex)]); }
+      const media = event.target.closest('[data-nested-media],[data-nested-clear]');
+      if (media) { event.preventDefault(); changeNestedMedia(media, layout, layoutFields[Number(media.dataset.fieldIndex)]); }
     };
     // Browsers normalize input line breaks and select defaults while parsing.
     // Compare against the mounted control, never its differently serialized HTML.
@@ -935,6 +937,8 @@
 
   function initWysiwygControls() {
     layoutEditor.querySelectorAll('.pkca__wysiwyg').forEach(editor => {
+      if (editor.dataset.initialized) return;
+      editor.dataset.initialized = 'true';
       const surface = editor.querySelector('.pkca__wysiwyg-editor');
       const value = editor.querySelector('[data-wysiwyg-value]');
       const format = editor.querySelector('[data-wysiwyg-format]');
@@ -1194,69 +1198,122 @@
     });
   }
 
+  function nestedRepeaterDefinition(field, path) {
+    if (!path.length) return field;
+    const rest = path.slice(1);
+    const child = (field.row_fields || []).find(candidate => candidate.type === 'repeater' && (candidate.path || []).every((part, index) => String(part) === String(rest[index])));
+    return child ? nestedRepeaterDefinition(child, rest.slice(child.path.length)) : null;
+  }
+
+  function redrawRepeater(wrapper, field, rows) {
+    const index = Number(wrapper.dataset.repeaterField);
+    wrapper.querySelector('.pkca__repeater-rows').innerHTML = repeaterRowsMarkup(field, index, rows);
+    updateRepeaterLimits(wrapper, field, rows);
+    initWysiwygControls();
+  }
+
   function updateRepeater(button, field) {
     const wrapper = button.closest('[data-repeater-field]');
     const value = wrapper.querySelector('[data-repeater-value]');
     const rows = JSON.parse(value.value || '[]');
+    const path = (button.dataset.nestedPath || '').split('.').filter(Boolean);
+    const definition = nestedRepeaterDefinition(field, path);
+    if (!definition) return;
+    const current = path.length ? (valueAtPath(rows, path) || []) : rows;
     if (button.dataset.repeaterAction === 'add') {
-      if (Number(field.max || 0) > 0 && rows.length >= Number(field.max)) return;
-      rows.push(structuredClone(field.row_template || {}));
+      if (Number(definition.max || 0) > 0 && current.length >= Number(definition.max)) return;
+      current.push(structuredClone(definition.row_template || {}));
     } else {
-      if (Number(field.min || 0) > 0 && rows.length <= Number(field.min)) return;
-      rows.splice(Number(button.dataset.row), 1);
+      if (Number(definition.min || 0) > 0 && current.length <= Number(definition.min)) return;
+      current.splice(Number(button.dataset.row), 1);
     }
+    if (path.length) setValueAtPath(rows, path, current);
     value.value = JSON.stringify(rows);
-    wrapper.querySelector('.pkca__repeater-rows').innerHTML = repeaterRowsMarkup(field, Number(button.dataset.fieldIndex), rows);
-    updateRepeaterLimits(wrapper, field, rows);
+    redrawRepeater(wrapper, field, rows);
     value.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   function updateRepeaterLimits(wrapper, field, rows) {
-    const addButton = wrapper.querySelector('[data-repeater-action="add"]');
+    const addButton = wrapper.querySelector('[data-repeater-action="add"]:not([data-nested-path])');
     const atMaximum = Number(field.max || 0) > 0 && rows.length >= Number(field.max);
     addButton.disabled = atMaximum;
     addButton.textContent = atMaximum ? `Maximum van ${field.max} rijen bereikt` : 'Rij toevoegen';
   }
 
-  function repeaterRowsMarkup(field, fieldIndex, rows) {
-    const rowFields = (field.row_fields || []).filter(rowField => rowField.type !== 'repeater');
+  function repeaterRowsMarkup(field, fieldIndex, rows, prefix = []) {
+    const rowFields = (field.row_fields || []).filter(candidate => !(field.row_fields || []).some(parent => parent.type === 'repeater' && pathStartsWith(candidate.path || [], parent.path || [])));
     const atMinimum = Number(field.min || 0) > 0 && rows.length <= Number(field.min);
     return rows.map((row, rowIndex) => {
       const shownInstructions = new Set();
-      return `<section class="pkca__repeater-row"><header><strong>Rij ${rowIndex + 1}</strong><button type="button" data-repeater-action="remove" data-row="${rowIndex}" data-field-index="${fieldIndex}"${atMinimum ? ' disabled' : ''}>Verwijderen</button></header><div class="pkca__repeater-fields">${rowFields.map(rowField => fieldGroupHelp(rowField, shownInstructions) + repeaterInputMarkup(rowField, row, rowIndex)).join('')}</div></section>`;
+      return `<section class="pkca__repeater-row"><header><strong>Rij ${rowIndex + 1}</strong><button type="button" data-repeater-action="remove" data-row="${rowIndex}" data-field-index="${fieldIndex}"${prefix.length ? ` data-nested-path="${escapeHtml(prefix.join('.'))}"` : ''}${atMinimum ? ' disabled' : ''}>Verwijderen</button></header><div class="pkca__repeater-fields">${rowFields.map(rowField => fieldGroupHelp(rowField, shownInstructions) + repeaterInputMarkup(rowField, row, rowIndex, fieldIndex, prefix)).join('')}</div></section>`;
     }).join('');
   }
 
-  function repeaterInputMarkup(field, row, rowIndex) {
+  function repeaterInputMarkup(field, row, rowIndex, fieldIndex, prefix = []) {
     const path = field.path || [];
     const value = valueAtPath(row, path);
-    const attrs = `data-repeater-input data-row="${rowIndex}" data-repeater-path="${escapeHtml(path.join('.'))}"`;
+    const fullPath = [...prefix, String(rowIndex), ...path];
+    const address = escapeHtml(fullPath.join('.'));
+    const attrs = `data-repeater-input data-repeater-path="${address}"`;
     const label = escapeHtml(friendlyLabel(field.label || humanize(path[path.length - 1] || 'Veld')));
     const help = field.instructions ? `<small class="pkca__layout-help">${escapeHtml(field.instructions)}</small>` : '';
+    if (field.type === 'repeater') {
+      const rows = Array.isArray(value) ? value : [];
+      const max = Number(field.max || 0) > 0 && rows.length >= Number(field.max);
+      return `<div class="pkca__nested-repeater"><strong>${label}</strong>${help}<div class="pkca__repeater-rows">${repeaterRowsMarkup(field, fieldIndex, rows, fullPath)}</div><button type="button" data-repeater-action="add" data-field-index="${fieldIndex}" data-nested-path="${address}"${max ? ' disabled' : ''}>${max ? `Maximum van ${field.max} rijen bereikt` : 'Rij toevoegen'}</button></div>`;
+    }
+    if (field.type === 'image' || field.type === 'gallery') {
+      const images = field.type === 'gallery' ? (Array.isArray(value) ? value : []) : (value ? [value] : []);
+      const definition = state.context?.sections?.[state.activeLayout]?.fields?.find(candidate => candidate.path.join('.') === [...state.context.sections[state.activeLayout].fields[fieldIndex].path, ...fullPath].join('.'));
+      const previews = images.map(image => typeof image === 'object' ? image : { ID: image, url: definition?.url || '' }).filter(image => image.url);
+      return `<div class="pkca__nested-image"><strong>${label}</strong>${help}<div class="pkca__layout-gallery">${previews.map(image => `<img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt || '')}">`).join('') || '<small>Geen afbeelding gekozen</small>'}</div><div class="pkca__media-actions"><button type="button" data-nested-media="${address}" data-nested-type="${field.type}" data-field-index="${fieldIndex}">Mediabibliotheek</button>${value && (!Array.isArray(value) || value.length) && !field.required ? `<button type="button" data-nested-clear="${address}" data-field-index="${fieldIndex}" data-nested-type="${field.type}">Verwijderen</button>` : ''}</div></div>`;
+    }
+    if (field.editable === false) return `<div><strong>${label}</strong>${help}<small>${escapeHtml(field.preview || (typeof value === 'object' ? 'Gekoppelde inhoud' : String(value ?? 'Niet ingevuld')))} · alleen-lezen</small></div>`;
+    if (field.acf_type === 'wysiwyg') return layoutField({ ...field, value: value || '' }, -1, -1).replaceAll('data-field-index="-1"', attrs);
     if (field.type === 'boolean') {
       const checked = value === true || value === 1 || value === '1';
       return `<label><span>${label}</span>${help}<span class="pkca__layout-toggle"><input type="checkbox" ${attrs}${checked ? ' checked' : ''}><span>${checked ? 'Ingeschakeld' : 'Uitgeschakeld'}</span></span></label>`;
     }
-    if (field.type === 'option') {
-      return `<label><span>${label}</span>${help}<select ${attrs}>${Object.entries(field.choices || {}).map(([key, choice]) => `<option value="${escapeHtml(key)}"${String(key) === String(value ?? '') ? ' selected' : ''}>${escapeHtml(choice)}</option>`).join('')}</select></label>`;
+    if (field.type === 'option') return `<label><span>${label}</span>${help}<select ${attrs}>${Object.entries(field.choices || {}).map(([key, choice]) => `<option value="${escapeHtml(key)}"${String(key) === String(value ?? '') ? ' selected' : ''}>${escapeHtml(choice)}</option>`).join('')}</select></label>`;
+    if (field.type === 'taxonomy') {
+      const ids = (Array.isArray(value) ? value : [value]).map(Number);
+      return `<label><span>${label}</span>${help}<select ${attrs} data-nested-taxonomy${field.multiple ? ' multiple' : ''}>${Object.entries(field.choices || {}).map(([key, choice]) => `<option value="${escapeHtml(key)}"${ids.includes(Number(key)) ? ' selected' : ''}>${escapeHtml(choice)}</option>`).join('')}</select></label>`;
     }
-    const plain = String(value ?? '');
+    const plain = typeof value === 'object' ? '' : String(value ?? '');
     const type = field.type === 'number' ? 'number' : field.type === 'email' ? 'email' : 'text';
-    const control = plain.length > 90 || field.acf_type === 'textarea' || field.acf_type === 'wysiwyg'
+    const control = plain.length > 90 || field.acf_type === 'textarea'
       ? `<textarea rows="3" ${attrs}>${escapeHtml(plain)}</textarea>`
       : `<input type="${type}" value="${escapeHtml(plain)}" ${attrs}>`;
     return `<label><span>${label}</span>${help}${control}</label>`;
   }
 
   function syncRepeaterValue(input) {
-    const wrapper = input.closest('[data-repeater-field]');
-    const store = wrapper?.querySelector('[data-repeater-value]');
+    const store = input.closest('[data-repeater-field]')?.querySelector('[data-repeater-value]');
     if (!store) return;
     const rows = JSON.parse(store.value || '[]');
-    const row = rows[Number(input.dataset.row)];
-    if (!row) return;
-    setValueAtPath(row, input.dataset.repeaterPath.split('.'), input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value);
+    const next = input.hasAttribute('data-nested-taxonomy') ? [...input.selectedOptions].map(option => Number(option.value)) : input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
+    setValueAtPath(rows, input.dataset.repeaterPath.split('.'), next);
     store.value = JSON.stringify(rows);
+  }
+
+  function changeNestedMedia(button, layout, field) {
+    const wrapper = button.closest('[data-repeater-field]');
+    const store = wrapper.querySelector('[data-repeater-value]');
+    const path = (button.dataset.nestedMedia || button.dataset.nestedClear).split('.');
+    const gallery = button.dataset.nestedType === 'gallery';
+    const update = images => {
+      if (!wrapper.isConnected) return;
+      const rows = JSON.parse(store.value || '[]');
+      setValueAtPath(rows, path, gallery ? images : (images[0] || false));
+      store.value = JSON.stringify(rows);
+      redrawRepeater(wrapper, field, rows);
+      store.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    if (button.hasAttribute('data-nested-clear')) update([]);
+    else chooseFromMedia(button, layout, { type: gallery ? 'gallery' : 'image', path: [], value: [] }, { onChoose: images => {
+      const existing = gallery ? (valueAtPath(JSON.parse(store.value || '[]'), path) || []) : [];
+      update(gallery ? [...new Map([...existing, ...images].map(image => [Number(image.ID || image.id || image), image])).values()] : images);
+    } });
   }
 
   function valueAtPath(value, path) {
@@ -1275,7 +1332,7 @@
     return path.length > prefix.length && prefix.every((part, index) => String(path[index]) === String(part));
   }
 
-  function chooseFromMedia(button, layout, field, { replaceId = null } = {}) {
+  function chooseFromMedia(button, layout, field, { replaceId = null, onChoose = null } = {}) {
     if (state.busy) return;
     captureLayoutDraft();
     const galleryField = field.type === 'gallery';
@@ -1296,6 +1353,7 @@
     const previous = dialog.querySelector('[data-media-previous]');
     const next = dialog.querySelector('[data-media-next]');
     const selected = new Set();
+    const mediaItems = new Map();
     let page = 1;
     let pages = 1;
     let controller;
@@ -1318,6 +1376,7 @@
         const query = new URLSearchParams({ post_id: String(config.postId), page: String(page), search: search.value.trim() });
         const data = await request(`media?${query}`, { signal: controller.signal });
         if (disposed || number !== requestNumber) return;
+        (data.items || []).forEach(item => mediaItems.set(Number(item.id), { ...item, ID: Number(item.id) }));
         pages = data.pages || 1;
         grid.innerHTML = (data.items || []).map(item => `<button type="button" data-media-id="${Number(item.id)}" aria-pressed="false" title="${escapeHtml(item.title)}"><img src="${escapeHtml(item.url)}" alt="" loading="lazy"><span>${escapeHtml(item.title || 'Afbeelding')}</span></button>`).join('');
         status.textContent = data.items?.length ? `${data.total} afbeelding${data.total === 1 ? '' : 'en'}${gallery ? ' · Je kunt meerdere afbeeldingen selecteren.' : ''}` : 'Geen afbeeldingen gevonden. Probeer een andere zoekterm.';
@@ -1361,10 +1420,22 @@
       if (!event.target.files?.length || state.activeLayout !== editorIndex) return;
       const input = event.target;
       dialog.close();
-      await uploadLayoutImage(input, layout, field, { replaceId });
+      if (onChoose) {
+        setBusy(true);
+        try {
+          const images = [];
+          for (const file of Array.from(input.files)) {
+            const data = new FormData(); data.append('post_id', config.postId); data.append('file', file);
+            const uploaded = await request('upload', { method: 'POST', body: data });
+            images.push({ ...uploaded, ID: Number(uploaded.id) });
+          }
+          onChoose(images);
+        } catch (error) { setLayoutStatus(error.message, 'error'); } finally { setBusy(false); }
+      } else await uploadLayoutImage(input, layout, field, { replaceId });
     });
     confirm.addEventListener('click', async () => {
       if (!selected.size || state.activeLayout !== editorIndex || state.busy) return;
+      if (onChoose) { const images = [...selected].map(id => mediaItems.get(id)).filter(Boolean); dialog.close(); onChoose(images); return; }
       const pending = (state.context?.changes || []).find(change => Number(change.section) === Number(layout.number) && (change.field_path || []).join('.') === field.path.join('.'));
       const current = galleryField ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
       const value = galleryField ? (replaceId === null ? [...new Set([...current, ...selected])] : current.map(id => id === replaceId ? [...selected][0] : id)) : [...selected][0];
