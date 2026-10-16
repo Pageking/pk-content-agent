@@ -693,7 +693,9 @@ final class PKCA_Content {
 		} finally {
 			self::$staged_changes = null;
 		}
-		self::save_changes( $post_id, $changes );
+		if ( ! self::save_changes( $post_id, $changes ) ) {
+			return new WP_Error( 'pkca_draft_failed', 'Je aanpassing kon niet worden bewaard. Probeer het opnieuw voordat je de pagina verlaat.', array( 'status' => 500 ) );
+		}
 		return array( 'queued' => $queued, 'unchanged' => $unchanged );
 	}
 
@@ -807,13 +809,17 @@ final class PKCA_Content {
 				$new_change['old_value'] = $existing['old_value'];
 				$new_change['base_modified'] = $existing['base_modified'];
 				$changes[ $index ] = $new_change;
-				self::save_changes( $post_id, $changes );
+				if ( ! self::save_changes( $post_id, $changes ) ) {
+					return new WP_Error( 'pkca_draft_failed', 'Je aanpassing kon niet worden bewaard. Probeer het opnieuw voordat je de pagina verlaat.', array( 'status' => 500 ) );
+				}
 				return $new_change;
 			}
 		}
 
 		$changes[] = $new_change;
-		self::save_changes( $post_id, $changes );
+		if ( ! self::save_changes( $post_id, $changes ) ) {
+			return new WP_Error( 'pkca_draft_failed', 'Je aanpassing kon niet worden bewaard. Probeer het opnieuw voordat je de pagina verlaat.', array( 'status' => 500 ) );
+		}
 		return $new_change;
 	}
 
@@ -981,7 +987,7 @@ final class PKCA_Content {
 		if ( 'post' === $target['type'] ) {
 			wp_update_post( array( 'ID' => (int) $target['acf_id'] ) );
 		}
-		delete_transient( self::transient_key( $post_id ) );
+		self::discard( $post_id );
 		return array( 'published' => count( $changes ), 'url' => $target['url'] );
 	}
 
@@ -1138,6 +1144,9 @@ final class PKCA_Content {
 	}
 
 	public static function discard( int|string $post_id ): void {
+		if ( get_current_user_id() ) {
+			delete_user_meta( get_current_user_id(), '_' . self::transient_key( $post_id ) );
+		}
 		delete_transient( self::transient_key( $post_id ) );
 	}
 
@@ -1153,7 +1162,7 @@ final class PKCA_Content {
 			return false;
 		}
 		if ( $remaining ) {
-			self::save_changes( $post_id, $remaining );
+			return self::save_changes( $post_id, $remaining );
 		} else {
 			self::discard( $post_id );
 		}
@@ -1162,7 +1171,14 @@ final class PKCA_Content {
 
 	public static function get_changes( int|string $post_id ): array {
 		if ( null !== self::$staged_changes ) return self::$staged_changes;
-		$value = get_transient( self::transient_key( $post_id ) );
+		$key = self::transient_key( $post_id );
+		$user_id = get_current_user_id();
+		$value = $user_id ? get_user_meta( $user_id, '_' . $key, true ) : null;
+		if ( ! is_array( $value ) ) {
+			$value = get_transient( $key );
+			// Migrate still-available previews without losing edits on upgrade.
+			if ( $user_id && is_array( $value ) ) self::save_changes( $post_id, $value );
+		}
 		// Older previews can contain repeaters queued solely by attachment
 		// metadata coercion. Exclude these from inspection and publication too.
 		return is_array( $value ) ? array_values( array_filter( $value, static fn( array $change ): bool =>
@@ -1170,12 +1186,21 @@ final class PKCA_Content {
 		) ) : array();
 	}
 
-	private static function save_changes( int|string $post_id, array $changes ): void {
+	private static function save_changes( int|string $post_id, array $changes ): bool {
 		if ( null !== self::$staged_changes ) {
 			self::$staged_changes = $changes;
-			return;
+			return true;
 		}
-		set_transient( self::transient_key( $post_id ), $changes, 2 * HOUR_IN_SECONDS );
+		$key = self::transient_key( $post_id );
+		$user_id = get_current_user_id();
+		if ( ! $user_id ) return set_transient( $key, $changes, 2 * HOUR_IN_SECONDS );
+		// Pending edits are private user data, not disposable cache entries.
+		// Keep them until publish/discard; source-version checks still protect
+		// against overwriting content that another editor has since changed.
+		$saved = update_user_meta( $user_id, '_' . $key, $changes );
+		if ( false === $saved && get_user_meta( $user_id, '_' . $key, true ) !== $changes ) return false;
+		delete_transient( $key );
+		return true;
 	}
 
 	private static function transient_key( int|string $post_id ): string {
