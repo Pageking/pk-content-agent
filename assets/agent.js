@@ -940,30 +940,46 @@
       const fieldIndex = Number(galleryField.dataset.galleryField);
       const field = fields[fieldIndex];
       const gallery = galleryField.querySelector('.pkca__layout-gallery');
+      if (!gallery) return;
       let dragged = null;
-      gallery?.querySelectorAll('figure[data-gallery-id]').forEach(figure => {
-        figure.addEventListener('dragstart', event => {
-          dragged = figure;
-          figure.classList.add('pkca__gallery-dragging');
-          event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('text/plain', figure.dataset.galleryId || '');
-        });
-        figure.addEventListener('dragover', event => {
-          if (!dragged || dragged === figure) return;
-          event.preventDefault();
-          const rect = figure.getBoundingClientRect();
-          gallery.insertBefore(dragged, event.clientX > rect.left + rect.width / 2 ? figure.nextSibling : figure);
-        });
-        figure.addEventListener('drop', async event => {
-          if (!dragged || !field) return;
-          event.preventDefault();
-          const ids = Array.from(gallery.querySelectorAll('figure[data-gallery-id]')).map(item => Number(item.dataset.galleryId)).filter(Boolean);
-          await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: 'gallery', value: ids }], `Volgorde van galerij in layout ${layout.number} aangepast.`, { keepEditor: true });
-        });
-        figure.addEventListener('dragend', () => {
-          figure.classList.remove('pkca__gallery-dragging');
-          dragged = null;
-        });
+      let original = [];
+      gallery.addEventListener('dragstart', event => {
+        if (state.busy) { event.preventDefault(); return; }
+        const figure = event.target.closest('figure[data-gallery-id]');
+        if (!figure || !gallery.contains(figure)) return;
+        dragged = figure;
+        original = Array.from(gallery.children);
+        figure.classList.add('pkca__gallery-dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', figure.dataset.galleryId || '');
+      });
+      gallery.addEventListener('dragover', event => {
+        if (!dragged) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const figure = event.target.closest('figure[data-gallery-id]');
+        if (!figure || figure === dragged || !gallery.contains(figure)) return;
+        const rect = figure.getBoundingClientRect();
+        gallery.insertBefore(dragged, event.clientX > rect.left + rect.width / 2 ? figure.nextSibling : figure);
+      });
+      // Drops can land in the gap between thumbnails or on the gallery itself.
+      // Saving only on individual figures leaves a visible but unsaved reorder.
+      gallery.addEventListener('drop', async event => {
+        if (!dragged || !field) return;
+        event.preventDefault();
+        dragged.classList.remove('pkca__gallery-dragging');
+        dragged = null;
+        const ids = Array.from(gallery.querySelectorAll('figure[data-gallery-id]')).map(item => Number(item.dataset.galleryId)).filter(Boolean);
+        const previousIds = original.map(item => Number(item.dataset.galleryId)).filter(Boolean);
+        if (JSON.stringify(ids) === JSON.stringify(previousIds)) return;
+        await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: 'gallery', value: ids }], `Volgorde van galerij in layout ${layout.number} aangepast.`, { keepEditor: true });
+      });
+      gallery.addEventListener('dragend', () => {
+        if (!dragged) return;
+        dragged.classList.remove('pkca__gallery-dragging');
+        dragged = null;
+        // Escape or a drop outside the gallery cancels the visual move too.
+        gallery.replaceChildren(...original);
       });
     });
   }
@@ -1303,9 +1319,67 @@
     return `${item.section}:${(item.field_path || []).join('.')}`;
   }
 
+  function previewSwiperGallery(section, item) {
+    if (!section.matches('.swiper_images') || typeof window.Swiper !== 'function') return null;
+    const sliders = section.querySelectorAll('.images-swiper');
+    if (sliders.length !== 1) return null;
+    const slider = sliders[0];
+    const swiper = slider.swiper;
+    if (!swiper || swiper.destroyed) return null;
+    const wrapper = slider.querySelector('.swiper-wrapper');
+    const cached = state.previewTargets.get(`swiper:${previewKey(item)}`);
+    const sample = wrapper?.querySelector('.swiper-slide') || cached?.sample;
+    const images = item.new_images || [];
+    if (!wrapper || (!sample && images.length)) return null;
+    const ordered = Array.from(wrapper.children).filter(el => el.matches('.swiper-slide'))
+      .sort((a, b) => Number(a.dataset.swiperSlideIndex || 0) - Number(b.dataset.swiperSlideIndex || 0));
+    const keys = ordered.map(el => imageKeyFromUrl(el.querySelector('img')?.src || ''));
+    const nextKeys = images.map(image => imageKeyFromUrl(image.url));
+    if (JSON.stringify(keys) === JSON.stringify(nextKeys)) return slider;
+    const oldKeys = (item.old_images || []).map(image => imageKeyFromUrl(image.url));
+    if (!cached && JSON.stringify(keys) !== JSON.stringify(oldKeys)) return null;
+    const slides = images.map(image => {
+      const template = document.createElement('template');
+      template.innerHTML = image.preview_html || '';
+      const img = template.content.querySelector('img');
+      if (!img) return null;
+      const slide = sample.cloneNode(true);
+      slide.className = 'swiper-slide';
+      ['style', 'data-swiper-slide-index', 'role', 'aria-label'].forEach(attr => slide.removeAttribute(attr));
+      slide.replaceChildren(img);
+      return slide;
+    });
+    if (slides.some(slide => !slide)) return null;
+    const params = { ...swiper.originalParams, loop: images.length > 2, initialSlide: 0 };
+    const pagination = section.querySelector('.images-pagination');
+    // The site's six-dot pagination closes over the original slide count.
+    // Replace its node and rebind it for this preview, including added images.
+    let nextPagination = null;
+    if (pagination) {
+      nextPagination = pagination.cloneNode(false);
+      nextPagination.removeAttribute('data-nova-pagination-built');
+      params.pagination = typeof window.novaPaginationConfig === 'function'
+        ? window.novaPaginationConfig(nextPagination, images.length)
+        : { el: nextPagination, clickable: true };
+    }
+    swiper.destroy(true, true);
+    if (pagination) pagination.replaceWith(nextPagination);
+    wrapper.replaceChildren(...slides);
+    section.hidden = images.length === 0;
+    section.classList.toggle('single-slide', images.length === 1);
+    const controls = section.querySelector('.controls-row');
+    if (controls) controls.hidden = images.length <= 1;
+    const replacement = new window.Swiper(slider, params);
+    if (nextPagination && typeof window.novaBindPagination === 'function') window.novaBindPagination(replacement, nextPagination, images.length);
+    state.previewTargets.set(`swiper:${previewKey(item)}`, { node: slider, sample });
+    return slider;
+  }
+
   function previewGallery(section, item) {
+    const slider = previewSwiperGallery(section, item);
+    if (slider) return slider;
     // PK's CTA image strip has image-only children and no slider lifecycle.
-    // Leave interactive or ambiguous galleries to the server-rendered fallback.
+    // Leave other interactive or ambiguous galleries to the server-rendered fallback.
     const galleries = Array.from(section.querySelectorAll('.cta-images'));
     const oldKeys = (item.old_images || []).map(image => imageKeyFromUrl(image.url));
     const newImages = item.new_images || [];

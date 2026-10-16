@@ -3,12 +3,14 @@
   "scripts": {
     "test:preview": "node preview-runtime.cjs",
     "test:editor": "node editor-changes.cjs",
-    "test": "node preview-runtime.cjs && node editor-changes.cjs && node media-picker.cjs && node numeric-values.cjs && node archive-gallery.cjs",
+    "test": "node preview-runtime.cjs && node editor-changes.cjs && node media-picker.cjs && node numeric-values.cjs && node archive-gallery.cjs && node gallery-controls.cjs",
     "test:media": "node media-picker.cjs",
     "test:numbers": "node numeric-values.cjs",
-    "test:archive": "node archive-gallery.cjs"
+    "test:archive": "node archive-gallery.cjs",
+    "test:gallery": "node gallery-controls.cjs"
   },
   "devDependencies": {
-    "jsdom": "30.1.3"
+    "jsdom": "30.1.3",
+    "swiper": "12.0.3"
   }
 }
