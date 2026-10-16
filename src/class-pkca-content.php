@@ -12,7 +12,7 @@ final class PKCA_Content {
 		return self::$suppress_preview;
 	}
 
-	private static function saved_rows( array $target ): mixed {
+	public static function saved_rows( array $target ): mixed {
 		// Inspection needs the saved source, while templates need the preview.
 		// ACF caches nested and formatted values too: reading the source into
 		// that shared store makes subsequent get_sub_field() return old rows.
@@ -77,6 +77,38 @@ final class PKCA_Content {
 			'link_targets' => self::link_targets(),
 			'changes'  => array_map( array( self::class, 'decorate_change' ), $pending_changes ),
 		);
+	}
+
+	public static function revision_comparison( int|string $post_id, array $before, array $after ): array {
+		$schemas = self::layout_schemas( $post_id );
+		$old = self::describe_sections( self::build_sections( $before, $schemas ), $before );
+		$new = self::describe_sections( self::build_sections( $after, $schemas ), $after );
+		$structure = static fn( array $sections ): array => array_map( static fn( array $s ): array => array( $s['row_index'], $s['layout_index'], $s['layout'], $s['block_id'], $s['section_path'] ?? array() ), $sections );
+		if ( $structure( $old ) !== $structure( $new ) ) {
+			return array( array( 'label' => 'Pagina-opbouw en inhoud', 'field' => array(), 'type' => 'repeater', 'old_value' => $before, 'new_value' => $after ) );
+		}
+		$changes = array();
+		foreach ( $new as $index => $section ) {
+			$previous = array();
+			foreach ( $old[ $index ]['fields'] as $field ) $previous[ implode( '.', $field['path'] ) ] = $field;
+			$next = array();
+			foreach ( $section['fields'] as $field ) $next[ implode( '.', $field['path'] ) ] = $field;
+			foreach ( array_unique( array_merge( array_keys( $previous ), array_keys( $next ) ) ) as $path ) {
+				$field = $next[ $path ] ?? $previous[ $path ];
+				$covered = false;
+				foreach ( array_merge( $previous, $next ) as $parent_path => $parent ) {
+					if ( str_starts_with( $path, $parent_path . '.' ) && in_array( $parent['type'], array( 'image', 'gallery', 'repeater' ), true ) ) { $covered = true; break; }
+				}
+				if ( $covered ) continue;
+				$a = $previous[ $path ]['value'] ?? null;
+				$b = $next[ $path ]['value'] ?? null;
+				$type = (string) $field['type'];
+				if ( self::stored_values_match( $a, $b, $type ) ) continue;
+				$change = self::decorate_change( array( 'type' => $type, 'old_value' => self::transport_value( $a, $type ), 'new_value' => self::transport_value( $b, $type ) ) );
+				$changes[] = array_merge( $change, array( 'label' => $section['label'] ?? $section['layout'], 'field' => $field ) );
+			}
+		}
+		return $changes;
 	}
 
 	private static function describe_sections( array $sections, array $rows ): array {
@@ -959,9 +991,8 @@ final class PKCA_Content {
 			);
 		}
 
-		if ( 'post' === $target['type'] ) {
-			wp_save_post_revision( (int) $target['acf_id'] );
-		}
+		$revision_id = PKCA_Revisions::snapshot( $target );
+		if ( is_wp_error( $revision_id ) ) return $revision_id;
 
 		$rows = self::saved_rows( $target );
 		if ( ! is_array( $rows ) ) {
@@ -988,7 +1019,7 @@ final class PKCA_Content {
 			wp_update_post( array( 'ID' => (int) $target['acf_id'] ) );
 		}
 		self::discard( $post_id );
-		return array( 'published' => count( $changes ), 'url' => $target['url'] );
+		return array( 'published' => count( $changes ), 'url' => $target['url'], 'revision_id' => $revision_id );
 	}
 
 	/**

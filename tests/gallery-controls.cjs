@@ -28,7 +28,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
  };
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
  w.PKContentAgent={postId:'archive:job',title:'Vacatures',restUrl:'/wp-json/pk-content-agent/v1/'};
- w.eval(fs.readFileSync(path.resolve(__dirname,'../assets/agent.js'),'utf8').replaceAll('window.location.reload();','window.testReloads=(window.testReloads||0)+1;').replace('window.location.assign(destination);','window.testNavigated=true;').replace(/\}\)\(\);\s*$/,'window.testApi={state,openLayoutEditor,applyPreview,previewKey,reversePreviewChange};})();'));
+ w.eval(fs.readFileSync(path.resolve(__dirname,'../assets/agent.js'),'utf8').replaceAll('window.location.reload();','window.testReloads=(window.testReloads||0)+1;').replaceAll('window.location.assign(destination);','window.testNavigated=true;').replace(/\}\)\(\);\s*$/,'window.testApi={state,openLayoutEditor,applyPreview,previewKey,reversePreviewChange};})();'));
  const wait=()=>new Promise(r=>setTimeout(r,35));await wait();const api=w.testApi;api.openLayoutEditor(0);
  const event=(name,target,x=0)=>{const e=new w.Event(name,{bubbles:true,cancelable:true});e.dataTransfer={setData(){},effectAllowed:'',dropEffect:''};e.clientX=x;target.dispatchEvent(e);};
  let gallery=d.querySelector('.pkca__layout-gallery'),figures=[...gallery.children];figures.forEach(el=>el.getBoundingClientRect=()=>({left:0,width:100}));

@@ -3,6 +3,7 @@
 defined( 'ABSPATH' ) || exit;
 
 require_once PKCA_DIR . 'src/class-pkca-content.php';
+require_once PKCA_DIR . 'src/class-pkca-revisions.php';
 require_once PKCA_DIR . 'src/class-pkca-openai.php';
 require_once PKCA_DIR . 'src/class-pkca-rest.php';
 

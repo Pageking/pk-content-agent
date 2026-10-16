@@ -20,12 +20,13 @@
   root.className = 'pkca';
   root.innerHTML = `
     <div class="pkca__launcher">
+      <button class="pkca__inline-toggle" type="button" aria-pressed="false">Tekst bewerken</button>
       <button class="pkca__review-return" type="button" hidden>Terug naar wijzigingen</button>
       <button class="pkca__toggle" type="button" aria-expanded="false" aria-controls="pkca-panel">Pagina aanpassen</button>
       <button class="pkca__icons-toggle" type="button" aria-label="Bewerkiconen verbergen" aria-pressed="true" title="Bewerkiconen verbergen"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="pkca__eye-slash" d="m3 3 18 18"/></svg></button>
     </div>
     <aside class="pkca__panel" id="pkca-panel" aria-label="Content-assistent" hidden>
-      <header class="pkca__header"><div class="pkca__heading"><strong>Content-assistent</strong><small>${escapeHtml(config.title)}</small></div><div class="pkca__window-actions"><button class="pkca__restart" type="button" aria-label="Nieuwe chat" title="Nieuwe chat">↻</button><button class="pkca__collapse" type="button" aria-label="Inklappen">−</button><button class="pkca__close" type="button" aria-label="Sluiten">×</button></div></header>
+      <header class="pkca__header"><div class="pkca__heading"><strong>Content-assistent</strong><small>${escapeHtml(config.title)}</small></div><div class="pkca__window-actions"><button class="pkca__history-open" type="button" title="Versiegeschiedenis bekijken" aria-label="Versiegeschiedenis bekijken"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2"/></svg><span>Versies</span></button><button class="pkca__restart" type="button" aria-label="Nieuwe chat" title="Nieuwe chat">↻</button><button class="pkca__collapse" type="button" aria-label="Inklappen">−</button><button class="pkca__close" type="button" aria-label="Sluiten">×</button></div></header>
       <div class="pkca__messages" aria-live="polite"></div>
       <div class="pkca__activity" role="status" aria-live="polite" hidden><span class="pkca__activity-spinner" aria-hidden="true"></span><span class="pkca__activity-text"></span></div>
       <div class="pkca__changes" hidden></div>
@@ -58,6 +59,196 @@
   root.append(reviewDialog);
   reviewReturn.addEventListener('click', openChangesReview);
   reviewDialog.addEventListener('cancel', event => { if (state.busy) event.preventDefault(); });
+
+  let inlineMode = false;
+  let inlineEditing = null;
+  const inlineTargets = new Map();
+  const inlineToggle = root.querySelector('.pkca__inline-toggle');
+  const inlineBar = document.createElement('div');
+  inlineBar.className = 'pkca__inline-bar';
+  inlineBar.hidden = true;
+  inlineBar.innerHTML = '<span>Pas de tekst aan</span><button type="button" data-inline-cancel>Annuleren</button><button type="button" data-inline-save>Klaar</button>';
+  root.append(inlineBar);
+  inlineToggle.addEventListener('click', () => {
+    if (state.busy) return;
+    cancelInlineEdit();
+    inlineMode = !inlineMode;
+    inlineToggle.setAttribute('aria-pressed', String(inlineMode));
+    inlineToggle.textContent = inlineMode ? 'Tekst bewerken stoppen' : 'Tekst bewerken';
+    installInlineTargets();
+  });
+  inlineBar.querySelector('[data-inline-cancel]').addEventListener('click', cancelInlineEdit);
+  inlineBar.querySelector('[data-inline-save]').addEventListener('click', saveInlineEdit);
+  document.addEventListener('click', event => {
+    if (!inlineMode || state.busy || event.target.closest('.pkca')) return;
+    const node = [...inlineTargets.keys()].find(element => element === event.target || element.contains(event.target));
+    if (!node) return;
+    event.preventDefault(); event.stopPropagation();
+    if (inlineEditing?.node === node) return;
+    if (inlineEditing) { inlineBar.querySelector('[data-inline-save]').focus(); return; }
+    const { layout, field } = inlineTargets.get(node);
+    captureLayoutDraft(); closeLayoutEditor(false);
+    // Animation libraries can split a heading into a div per character. Never
+    // edit/serialize those presentation wrappers. A clean replacement also
+    // isolates the editor from an existing animation's resize/revert handlers.
+    const surface = node.cloneNode(false);
+    const source = String(field.value ?? '');
+    surface.innerHTML = inlineFieldMarkup(field, source);
+    if (normalizeText(surface.getAttribute('aria-label') || '') === normalizeText(stripHtml(source))) surface.removeAttribute('aria-label');
+    surface.removeAttribute('aria-hidden');
+    inlineEditing = { node: surface, originalNode: node, layout, field, html: node.innerHTML, baselineHtml: surface.innerHTML, editable: node.getAttribute('contenteditable') };
+    node.replaceWith(surface);
+    inlineTargets.delete(node);
+    inlineTargets.set(surface, { layout, field });
+    surface.setAttribute('contenteditable', 'true');
+    surface.classList.add('pkca-inline-active');
+    inlineBar.hidden = false;
+    positionInlineBar(); surface.focus();
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (!inlineEditing || state.busy) return;
+    if (event.key === 'Escape') { event.preventDefault(); cancelInlineEdit(); }
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); saveInlineEdit(); }
+  });
+  window.addEventListener('scroll', positionInlineBar, { passive: true });
+  window.addEventListener('resize', positionInlineBar);
+
+  function installInlineTargets() {
+    if (inlineEditing) return;
+    inlineTargets.forEach((_, node) => { node.classList.remove('pkca-inline-editable'); node.removeAttribute('data-pkca-inline'); });
+    inlineTargets.clear();
+    if (!inlineMode) return;
+    getSectionEntries().forEach(({ element, context }) => {
+      if (context.shared) return;
+      (context.fields || []).filter(field => field.editable && field.type === 'text').forEach(field => {
+        const wanted = normalizeText(stripHtml(String(field.value ?? '').replace(/<br\s*\/?>/gi, '\n')));
+        if (!wanted) return;
+        const candidates = [...element.querySelectorAll('.pk-heading-text,.pk-text,.wysiwyg,.wysiwyg-gaps,.subtitle,.sub-title,h1,h2,h3,h4,h5,h6,p')]
+          .filter(node => !node.closest('nav,button,.pkca') && normalizeText(inlineVisibleText(node)) === wanted);
+        const headings = candidates.filter(node => node.matches('.pk-heading-text'));
+        const matches = headings.length ? headings : candidates;
+        const outer = matches.filter(node => !matches.some(parent => parent !== node && parent.contains(node)));
+        if (outer.length !== 1 || inlineTargets.has(outer[0])) return;
+        const node = outer[0];
+        inlineTargets.set(node, { layout: context, field });
+        node.classList.add('pkca-inline-editable');
+        node.setAttribute('data-pkca-inline', 'Klik om tekst te bewerken');
+      });
+    });
+  }
+
+  function inlineVisibleText(node) {
+    const copy = node.cloneNode(true);
+    copy.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    return copy.textContent;
+  }
+
+  function inlineFieldMarkup(field, source) {
+    if (field.acf_type === 'wysiwyg' || hasHtmlMarkup(source)) return source;
+    return escapeHtml(stripHtml(source)).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
+  }
+
+  function positionInlineBar() {
+    if (!inlineEditing || inlineBar.hidden) return;
+    const rect = inlineEditing.node.getBoundingClientRect();
+    inlineBar.style.left = `${Math.max(8, Math.min(window.innerWidth - (inlineBar.offsetWidth || 310) - 8, rect.left))}px`;
+    inlineBar.style.top = `${Math.max(stickyTopInset(), Math.min(window.innerHeight - 58, rect.bottom + 8))}px`;
+  }
+
+  function endInlineEdit(edit) {
+    if (edit.editable === null) edit.node.removeAttribute('contenteditable');
+    else edit.node.setAttribute('contenteditable', edit.editable);
+    edit.node.classList.remove('pkca-inline-active');
+    inlineEditing = null; inlineBar.hidden = true;
+  }
+
+  function restoreInlineOriginal(edit) {
+    edit.originalNode.classList.remove('pkca-inline-editable');
+    edit.originalNode.removeAttribute('data-pkca-inline');
+    edit.node.replaceWith(edit.originalNode);
+  }
+
+  function cancelInlineEdit() {
+    if (!inlineEditing || state.busy) return;
+    const edit = inlineEditing;
+    restoreInlineOriginal(edit);
+    endInlineEdit(edit); installInlineTargets();
+  }
+
+  async function saveInlineEdit() {
+    if (!inlineEditing || state.busy) return;
+    const edit = inlineEditing;
+    const rich = edit.field.acf_type === 'wysiwyg' || hasHtmlMarkup(String(edit.field.value || ''));
+    let value = rich ? edit.node.innerHTML : stripHtml(edit.node.innerHTML.replace(/<br\s*\/?>|<\/(?:p|div)>/gi, '\n')).replace(/\n$/, '');
+    if (!rich && edit.field.acf_type !== 'textarea' && value.includes('\n')) value = escapeHtml(value).replace(/\n/g, '<br>');
+    if (edit.node.innerHTML === edit.baselineHtml) { cancelInlineEdit(); return; }
+    endInlineEdit(edit);
+    state.previewTargets.set(`${edit.layout.row_index}:${edit.layout.layout_index}:${edit.field.path.join('.')}`, { type: 'text', node: edit.node });
+    const saved = await queueLayoutChanges([{ section: edit.layout.number, field_path: edit.field.path, type: 'text', value }], 'Tekst aangepast. Controleer je wijziging voordat je die online zet.');
+    if (!saved) {
+      restoreInlineOriginal(edit);
+      state.previewTargets.set(`${edit.layout.row_index}:${edit.layout.layout_index}:${edit.field.path.join('.')}`, { type: 'text', node: edit.originalNode });
+    }
+    installInlineTargets();
+    setOpen(true);
+  }
+
+  const historyDialog = document.createElement('dialog');
+  historyDialog.className = 'pkca__history';
+  historyDialog.setAttribute('aria-label', 'Vorige versies van de pagina-inhoud');
+  root.append(historyDialog);
+  root.querySelector('.pkca__history-open').addEventListener('click', openRevisionHistory);
+  historyDialog.addEventListener('cancel', event => { if (state.busy) event.preventDefault(); });
+
+  async function openRevisionHistory() {
+    if (state.busy) return;
+    cancelInlineEdit();
+    historyDialog.innerHTML = '<header><h2>Versiegeschiedenis</h2><button type="button" data-history-close aria-label="Vorige versies sluiten">×</button></header><div class="pkca__history-body" role="status">Versies laden…</div>';
+    historyDialog.querySelector('[data-history-close]').onclick = () => { if (!state.busy) historyDialog.close(); };
+    historyDialog.showModal();
+    try {
+      const context = await request(`context?post_id=${encodeURIComponent(config.postId)}`);
+      const data = await request(`revisions?post_id=${encodeURIComponent(config.postId)}`);
+      const body = historyDialog.querySelector('.pkca__history-body');
+      if (!data.available) { body.textContent = data.message; return; }
+      if (context.changes?.length) { body.textContent = 'Zet je wijzigingen eerst online of maak ze ongedaan voordat je een vorige versie terugzet.'; return; }
+      body.innerHTML = '<p>Hier kun je eerder bewaarde pagina-inhoud terugzetten. Teksten en afbeeldingen worden meegenomen; pagina-instellingen blijven gelijk.</p>' + (data.revisions?.length
+        ? `<ul>${data.revisions.map(revision => `<li><div><strong>${escapeHtml(new Date(revision.date).toLocaleString('nl-NL'))}</strong><small>${escapeHtml(revision.author)}</small></div><button type="button" data-restore-version="${revision.id}">Bekijk verschillen</button></li>`).join('')}</ul>`
+        : '<p>Er zijn nog geen vorige versies met herstelbare inhoud. Zodra je wijzigingen online zet, bewaren we de huidige inhoud als WordPress-revisie.</p>');
+      body.querySelectorAll('[data-restore-version]').forEach(button => button.onclick = async () => {
+        const id = Number(button.dataset.restoreVersion);
+        const revision = data.revisions.find(item => item.id === id);
+        body.innerHTML = '<p role="status">Verschillen laden…</p>';
+        setBusy(true, 'Versie vergelijken…');
+        let comparison;
+        try {
+          comparison = await request(`revisions?post_id=${encodeURIComponent(config.postId)}&revision_id=${id}`);
+        } catch (error) {
+          body.innerHTML = `<p role="alert">${escapeHtml(error.message)}</p><button type="button" data-history-back>Terug naar versies</button>`;
+          body.querySelector('[data-history-back]').onclick = () => { historyDialog.close(); openRevisionHistory(); };
+          return;
+        } finally { setBusy(false); }
+        const items = comparison.changes || [];
+        body.innerHTML = `<p><strong>${escapeHtml(new Date(revision.date).toLocaleString('nl-NL'))}</strong> · ${escapeHtml(revision.author)}</p><p>${items.length ? 'Dit verandert er als je deze versie terugzet:' : 'Deze versie heeft dezelfde inhoud als de huidige pagina.'}</p>
+          ${items.map(item => `<article class="pkca__review-card"><header><div><span>${escapeHtml(item.label)}</span><h3>${escapeHtml(friendlyLabel(item.field?.label || 'Pagina-inhoud'))}</h3></div></header><div class="pkca__review-comparison"><section><h4>Nu online</h4>${reviewValue(item, 'old', item.field)}</section><section><h4>Na terugzetten</h4>${reviewValue(item, 'new', item.field)}</section></div></article>`).join('')}
+          <div class="pkca__history-confirm"><p>Terugzetten zet deze inhoud direct online. Je huidige inhoud bewaren we eerst als versie, zodat je dit kunt terugdraaien.</p><div class="pkca__history-actions"><button type="button" data-history-back>Terug naar versies</button>${items.length ? '<button type="button" data-history-restore>Deze versie terugzetten</button>' : ''}</div><p class="pkca__history-status" role="status"></p></div>`;
+        body.querySelector('[data-history-back]').onclick = () => { historyDialog.close(); openRevisionHistory(); };
+        if (!items.length) return;
+        body.querySelector('[data-history-restore]').onclick = async () => {
+          setBusy(true, 'Vorige versie terugzetten…');
+          historyDialog.querySelectorAll('button').forEach(control => control.disabled = true);
+          const status = body.querySelector('.pkca__history-status'); status.textContent = 'Vorige versie terugzetten…';
+          try {
+            const restored = await request('restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ post_id: config.postId, revision_id: id, base_version: comparison.base_version }) });
+            sessionStorage.setItem('pkca-status', 'De vorige pagina-inhoud is teruggezet.');
+            const destination = new URL(restored.url, window.location.origin).pathname;
+            window.location.assign(destination);
+          } catch (error) { status.textContent = error.message; }
+          finally { setBusy(false); historyDialog.querySelectorAll('button').forEach(control => control.disabled = false); }
+        };
+      });
+    } catch (error) { historyDialog.querySelector('.pkca__history-body').textContent = error.message; }
+  }
 
   restoreHistory();
   restorePosition();
@@ -360,6 +551,7 @@
       renderChanges(state.context.changes || []);
       installLayoutButtons();
       installContentButtons();
+      installInlineTargets();
       if (restorePreview && state.activeLayout !== null) openLayoutEditor(state.activeLayout);
       if (sessionStorage.getItem('pkca-review-resume') === String(config.postId)) {
         sessionStorage.removeItem('pkca-review-resume');
@@ -696,7 +888,7 @@
     }
     if (field.type === 'gallery') {
       const galleryImages = pending?.new_images || field.images || [];
-      return `<div class="pkca__layout-field pkca__layout-field--gallery" data-gallery-field="${index}" ${meta}><span>${escapeHtml(label)}</span>${help}<div class="pkca__layout-gallery">${galleryImages.map(image => `<figure draggable="true" data-gallery-id="${image.id}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.title || '')}"><button type="button" data-gallery-remove="${image.id}" data-field-index="${index}" aria-label="Afbeelding verwijderen">×</button></figure>`).join('')}${galleryImages.length ? '' : '<span class="pkca__layout-image-empty">Nog geen afbeeldingen gekozen</span>'}</div><small class="pkca__gallery-help">Sleep afbeeldingen om de volgorde te wijzigen.</small><div class="pkca__media-actions"><label><input type="file" accept="image/*" multiple data-field-index="${index}"><em>Uploaden</em></label><button type="button" data-media-field="${index}">Mediabibliotheek</button></div></div>`;
+      return `<div class="pkca__layout-field pkca__layout-field--gallery" data-gallery-field="${index}" ${meta}><span>${escapeHtml(label)}</span>${help}<div class="pkca__layout-gallery">${galleryImages.map((image, position) => `<figure draggable="true" data-gallery-id="${image.id}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.title || '')}"><figcaption><span class="pkca__gallery-position">${position + 1}</span><div class="pkca__gallery-tools"><button type="button" data-gallery-move="${image.id}" data-direction="-1" data-field-index="${index}" aria-label="Afbeelding ${position + 1} naar links"${position === 0 ? ' disabled' : ''}>←</button><button type="button" data-gallery-replace="${image.id}" data-field-index="${index}" aria-label="Afbeelding ${position + 1} vervangen">Vervangen</button><button type="button" data-gallery-move="${image.id}" data-direction="1" data-field-index="${index}" aria-label="Afbeelding ${position + 1} naar rechts"${position === galleryImages.length - 1 ? ' disabled' : ''}>→</button></div></figcaption><button type="button" data-gallery-remove="${image.id}" data-field-index="${index}" aria-label="Afbeelding ${position + 1} verwijderen">×</button></figure>`).join('')}${galleryImages.length ? '' : '<span class="pkca__layout-image-empty">Nog geen afbeeldingen gekozen</span>'}</div><small class="pkca__gallery-help">Sleep afbeeldingen om de volgorde te wijzigen.</small><div class="pkca__media-actions"><label><input type="file" accept="image/*" multiple data-field-index="${index}"><em>Uploaden</em></label><button type="button" data-media-field="${index}">Mediabibliotheek</button></div></div>`;
     }
     if (field.type === 'repeater') {
       const rows = pending?.new_value || field.value || [];
@@ -900,7 +1092,7 @@
     await queueLayoutChanges(edits, count => `${count} veld${count === 1 ? '' : 'en'} uit layout ${layout.number} aangepast.`);
   }
 
-  async function uploadLayoutImage(input, layout, field) {
+  async function uploadLayoutImage(input, layout, field, { replaceId = null } = {}) {
     if (!input.files?.[0]) return;
     setBusy(true);
     setLayoutStatus('Afbeelding uploaden…', 'loading');
@@ -915,7 +1107,7 @@
       }
       const pending = (state.context?.changes || []).find(change => Number(change.section) === layout.number && (change.field_path || []).join('.') === field.path.join('.'));
       const currentIds = field.type === 'gallery' ? (pending?.new_value || field.value || []).map(Number) : [];
-      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value: field.type === 'gallery' ? [...currentIds, ...uploadedIds] : uploadedIds[0] }], `${uploadedIds.length} afbeelding${uploadedIds.length === 1 ? '' : 'en'} in layout ${layout.number} aangepast.`, { keepEditor: field.type === 'gallery' });
+      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value: field.type === 'gallery' ? (replaceId === null ? [...currentIds, ...uploadedIds] : currentIds.map(id => id === replaceId ? uploadedIds[0] : id)) : uploadedIds[0] }], `${uploadedIds.length} afbeelding${uploadedIds.length === 1 ? '' : 'en'} in layout ${layout.number} aangepast.`, { keepEditor: field.type === 'gallery' });
     } catch (error) {
       addMessage(error.message, 'error');
       setLayoutStatus(error.message, 'error');
@@ -936,6 +1128,22 @@
       event.preventDefault();
       event.stopPropagation();
       updateGallery(button, layout, fields[Number(button.dataset.fieldIndex)]);
+    }));
+    scope.querySelectorAll('[data-gallery-replace]').forEach(button => button.addEventListener('click', event => {
+      event.preventDefault();
+      chooseFromMedia(button, layout, fields[Number(button.dataset.fieldIndex)], { replaceId: Number(button.dataset.galleryReplace) });
+    }));
+    scope.querySelectorAll('[data-gallery-move]').forEach(button => button.addEventListener('click', async event => {
+      event.preventDefault();
+      if (state.busy) return;
+      const field = fields[Number(button.dataset.fieldIndex)];
+      const pending = (state.context.changes || []).find(item => Number(item.section) === Number(layout.number) && item.field_path.join('.') === field.path.join('.'));
+      const ids = [...(pending?.new_value || field.value || [])].map(Number);
+      const from = ids.indexOf(Number(button.dataset.galleryMove));
+      const to = from + Number(button.dataset.direction);
+      if (from < 0 || to < 0 || to >= ids.length) return;
+      [ids[from], ids[to]] = [ids[to], ids[from]];
+      await queueLayoutChanges([{ section: layout.number, field_path: field.path, type: 'gallery', value: ids }], 'Volgorde aangepast.', { keepEditor: true });
     }));
     const galleryFields = scope.matches?.('[data-gallery-field]') ? [scope] : Array.from(scope.querySelectorAll('[data-gallery-field]'));
     galleryFields.forEach(galleryField => {
@@ -1067,10 +1275,11 @@
     return path.length > prefix.length && prefix.every((part, index) => String(path[index]) === String(part));
   }
 
-  function chooseFromMedia(button, layout, field) {
+  function chooseFromMedia(button, layout, field, { replaceId = null } = {}) {
     if (state.busy) return;
     captureLayoutDraft();
-    const gallery = field.type === 'gallery';
+    const galleryField = field.type === 'gallery';
+    const gallery = galleryField && replaceId === null;
     const editorIndex = state.activeLayout;
     const dialog = document.createElement('dialog');
     dialog.className = 'pkca__media';
@@ -1152,15 +1361,16 @@
       if (!event.target.files?.length || state.activeLayout !== editorIndex) return;
       const input = event.target;
       dialog.close();
-      await uploadLayoutImage(input, layout, field);
+      await uploadLayoutImage(input, layout, field, { replaceId });
     });
     confirm.addEventListener('click', async () => {
       if (!selected.size || state.activeLayout !== editorIndex || state.busy) return;
       const pending = (state.context?.changes || []).find(change => Number(change.section) === Number(layout.number) && (change.field_path || []).join('.') === field.path.join('.'));
-      const current = gallery ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
-      const value = gallery ? [...new Set([...current, ...selected])] : [...selected][0];
+      const current = galleryField ? (pending?.new_value || field.value || []).map(Number).filter(Boolean) : [];
+      const value = galleryField ? (replaceId === null ? [...new Set([...current, ...selected])] : current.map(id => id === replaceId ? [...selected][0] : id)) : [...selected][0];
+      if (Array.isArray(value) && new Set(value).size !== value.length) { status.textContent = 'Deze afbeelding staat al in de galerij. Kies een andere afbeelding.'; return; }
       dialog.close();
-      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], gallery ? 'Galerij aangepast.' : 'Afbeelding aangepast.', { keepEditor: gallery });
+      await queueLayoutChanges([{ section: layout.number, field_path: field.path, field_name: field.name, type: field.type, value }], galleryField ? 'Galerij aangepast.' : 'Afbeelding aangepast.', { keepEditor: galleryField });
     });
     dialog.showModal();
     load();
@@ -1218,13 +1428,16 @@
       } else if (state.activeLayout === editorIndex) {
         closeLayoutEditor(false);
       }
+      installInlineTargets();
       if (requiresRefresh && !keepEditor) {
         sessionStorage.setItem('pkca-preview-resume', String(config.postId));
         window.location.reload();
       }
+      return true;
     } catch (error) {
       addMessage(error.message, 'error');
       setLayoutStatus(error.message || 'De wijzigingen konden niet worden klaargezet.', 'error');
+      return false;
     } finally {
       setBusy(false);
       const submit = layoutEditor.querySelector('.pkca__layout-save');
@@ -1416,6 +1629,57 @@
     return gallery;
   }
 
+  function syncPendingHighlights() {
+    document.querySelectorAll('[data-pkca-preview]').forEach(element => {
+      element.classList.remove('pkca-preview-target');
+      element.removeAttribute('data-pkca-preview');
+    });
+    const mark = element => {
+      if (!element || element.closest('.pkca') || element.closest('[contenteditable="true"]')) return;
+      if (element.matches('.pk-heading-text')) element = element.closest('h1,h2,h3,h4,h5,h6') || element;
+      if (element.matches('.pk-button-text')) element = element.closest('a,button') || element;
+      element.classList.add('pkca-preview-target');
+      element.setAttribute('data-pkca-preview', 'true');
+    };
+    const text = value => normalizeText(stripHtml(String(value ?? '').replace(/<br\s*\/?>/gi, ' ')));
+    const visit = (section, value, other, type, path, item) => {
+      if (sameReviewValue(value, other)) return;
+      if (type === 'image' || (value && typeof value === 'object' && value.url && (value.ID || value.id))) {
+        const url = value?.url || item?.new_url;
+        if (url) section.querySelectorAll('img').forEach(img => { if (imageKeyFromUrl(img.currentSrc || img.src) === imageKeyFromUrl(url)) mark(img); });
+        return;
+      }
+      if (type === 'gallery') {
+        (item?.new_images || []).forEach(image => visit(section, image, null, 'image', path));
+        return;
+      }
+      if (value && typeof value === 'object') {
+        Object.entries(value).forEach(([key, child]) => {
+          if (key !== 'acf_fc_layout') visit(section, child, other?.[key], typeof child === 'object' ? '' : 'text', [...path, key]);
+        });
+        return;
+      }
+      const cached = state.previewTargets.get(`${item?.row_index}:${item?.layout_index}:${path.join('.')}`)?.node;
+      if (cached?.isConnected) mark(cached.nodeType === Node.TEXT_NODE ? cached.parentElement : cached);
+      if (type !== 'text' || !text(value)) return;
+      const candidates = Array.from(section.querySelectorAll('.pk-heading-text, .pk-text, .wysiwyg, .wysiwyg-gaps, .subtitle, .sub-title, h1,h2,h3,h4,h5,h6,p,span,a,li,.logo-title'))
+        .filter(element => text(element.textContent) === text(value));
+      candidates.filter(element => !candidates.some(child => child !== element && element.contains(child))).forEach(mark);
+    };
+    (state.context?.changes || []).forEach(item => {
+      const section = getSectionByNumber(item.section);
+      if (section) visit(section, item.new_value, item.old_value, item.type, item.field_path || [], item);
+    });
+  }
+
+  let highlightFrame = null;
+  const highlightObserver = new MutationObserver(records => {
+    if (!state.context?.changes?.length || !records.some(record => !root.contains(record.target))) return;
+    if (highlightFrame !== null) return;
+    highlightFrame = requestAnimationFrame(() => { highlightFrame = null; syncPendingHighlights(); });
+  });
+  highlightObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
+
   function applyPreview(items) {
     const applied = new Set();
     document.querySelectorAll('[data-pkca-preview]').forEach(element => {
@@ -1578,6 +1842,7 @@
         changedElement.setAttribute('data-pkca-preview', 'true');
       }
     });
+    syncPendingHighlights();
     return applied;
   }
 
@@ -1784,7 +2049,7 @@
       const { section, field } = reviewField(item);
       return `${section?.label || `Onderdeel ${item.section}`} · ${friendlyLabel(field?.label || item.field_name || 'Inhoud')}`;
     }))];
-    changes.innerHTML = `<div class="pkca__pending-summary"><strong>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} · niet opgeslagen</strong><span>Je aanpassingen zijn bewaard.</span><span class="pkca__pending-location" title="${escapeHtml(locations.join(', '))}">${escapeHtml(locations.slice(0, 2).join(', '))}${locations.length > 2 ? ` +${locations.length - 2}` : ''}</span></div><button type="button" class="pkca__review-open">Bekijken en opslaan</button>`;
+    changes.innerHTML = `<div class="pkca__pending-summary"><strong>${pendingCount} wijziging${pendingCount === 1 ? '' : 'en'} · niet opgeslagen</strong><span>Je wijzigingen zijn bewaard, maar staan nog niet online.</span><span class="pkca__pending-location" title="${escapeHtml(locations.join(', '))}">${escapeHtml(locations.slice(0, 2).join(', '))}${locations.length > 2 ? ` +${locations.length - 2}` : ''}</span></div><button type="button" class="pkca__review-open">Wijzigingen controleren</button>`;
     changes.querySelector('.pkca__review-open').addEventListener('click', openChangesReview);
   }
 
@@ -1870,10 +2135,10 @@
       <div class="pkca__review-body"><p class="pkca__review-explanation">Je ziet alleen wat je hebt aangepast. Pas na opslaan zien bezoekers je wijzigingen.</p>
       ${items.map((item, index) => {
         const { section, field } = reviewField(item);
-        return `<article class="pkca__review-card"><header><div><span>${escapeHtml(section?.label || `Onderdeel ${item.section}`)}</span><h3>${escapeHtml(friendlyLabel(field?.label || item.field_name))}</h3></div><button type="button" data-review-locate="${index}">Bekijk op de pagina ↗</button></header>${field?.instructions || field?.group_instructions?.length ? `<p class="pkca__review-hint">${escapeHtml([...(field.group_instructions || []).map(group => group.text), field.instructions].filter(Boolean).join(' '))}</p>` : ''}<div class="pkca__review-comparison"><section><h4>Nu online</h4>${reviewValue(item, 'old', field)}</section><section><h4>Na opslaan</h4>${reviewValue(item, 'new', field)}</section></div><footer><button type="button" data-review-discard="${escapeHtml(item.id || '')}">Deze wijziging verwijderen</button></footer></article>`;
+        return `<article class="pkca__review-card"><header><div><span>${escapeHtml(section?.label || `Onderdeel ${item.section}`)}</span><h3>${escapeHtml(friendlyLabel(field?.label || item.field_name))}</h3></div><button type="button" data-review-locate="${index}">Bekijk op de pagina ↗</button></header>${field?.instructions || field?.group_instructions?.length ? `<p class="pkca__review-hint">${escapeHtml([...(field.group_instructions || []).map(group => group.text), field.instructions].filter(Boolean).join(' '))}</p>` : ''}<div class="pkca__review-comparison"><section><h4>Nu online</h4>${reviewValue(item, 'old', field)}</section><section><h4>Na opslaan</h4>${reviewValue(item, 'new', field)}</section></div><footer><button type="button" data-review-discard="${escapeHtml(item.id || '')}">Ongedaan maken</button></footer></article>`;
       }).join('')}</div>
       <div class="pkca__review-status" role="status" aria-live="polite" hidden></div>
-      <footer class="pkca__review-footer"><button type="button" data-review-close>Verder aanpassen</button><div><button type="button" data-review-discard-all>Alles ongedaan maken</button><button type="button" class="pkca__review-publish" data-review-publish>${items.length === 1 ? 'Wijziging opslaan' : `${items.length} wijzigingen opslaan`}</button></div></footer>`;
+      <footer class="pkca__review-footer"><button type="button" data-review-close>Verder aanpassen</button><div><button type="button" data-review-discard-all>Alles ongedaan maken</button><button type="button" class="pkca__review-publish" data-review-publish>${items.length === 1 ? 'Online zetten' : `${items.length} wijzigingen online zetten`}</button></div></footer>`;
     reviewDialog.querySelector('.pkca__review-close').addEventListener('click', () => reviewDialog.close());
     reviewDialog.querySelector('[data-review-close]').addEventListener('click', () => reviewDialog.close());
     reviewDialog.querySelector('[data-review-discard-all]').addEventListener('click', () => finish('discard'));
@@ -1916,7 +2181,7 @@
       });
       const preview = action === 'publish' ? pending : pending.map(reversePreviewChange);
       const applied = applyPreview(preview);
-      const message = action === 'publish' ? `${data.published} wijziging(en) opgeslagen.` : 'Je aanpassingen zijn ongedaan gemaakt.';
+      const message = action === 'publish' ? 'Je wijzigingen staan online.' : 'Je aanpassingen zijn ongedaan gemaakt.';
       if (preview.every(item => applied.has(previewKey(item)))) {
         reviewDialog.close();
         closeLayoutEditor(false);
@@ -1950,7 +2215,7 @@
   }
 
 	async function discardChange(changeId) {
-	  if (!changeId) return;
+	  if (!changeId || state.busy) return;
 	  setBusy(true);
 	  try {
 		const item = state.context?.changes?.find(change => change.id === changeId);
