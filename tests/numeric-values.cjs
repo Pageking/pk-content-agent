@@ -12,7 +12,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
  w.eval(fs.readFileSync(path.resolve(__dirname,'../assets/agent.js'),'utf8').replace(/\}\)\(\);\s*$/,'window.testApi={openLayoutEditor,collectLayoutEdits,reviewValue};})();'));
  await new Promise(r=>setTimeout(r,20));const api=w.testApi;api.openLayoutEditor(0);
  assert.equal(api.collectLayoutEdits(section,[field]).length,0);
- const first=d.querySelector('[data-repeater-input][data-row="0"][data-repeater-path="number"]');
+ const first=d.querySelector('[data-repeater-input][data-repeater-path="0.number"]');
  first.value='10001';first.dispatchEvent(new w.Event('input',{bubbles:true}));
  const edits=api.collectLayoutEdits(section,[field]);assert.equal(edits.length,1);
  assert.deepEqual(Array.from(edits[0].value,row=>row.number),['10001','1.700','9','60']);

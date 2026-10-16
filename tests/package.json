@@ -3,14 +3,15 @@
   "scripts": {
     "test:preview": "node preview-runtime.cjs",
     "test:editor": "node editor-changes.cjs",
-    "test": "node preview-runtime.cjs && node editor-changes.cjs && node media-picker.cjs && node numeric-values.cjs && node archive-gallery.cjs && node gallery-controls.cjs && node activity.cjs && node local-workflow.cjs && node inline-animation.cjs",
+    "test": "node preview-runtime.cjs && node editor-changes.cjs && node media-picker.cjs && node numeric-values.cjs && node archive-gallery.cjs && node gallery-controls.cjs && node activity.cjs && node local-workflow.cjs && node inline-animation.cjs && node nested-fields.cjs",
     "test:media": "node media-picker.cjs",
     "test:numbers": "node numeric-values.cjs",
     "test:archive": "node archive-gallery.cjs",
     "test:gallery": "node gallery-controls.cjs",
     "test:activity": "node activity.cjs",
     "test:workflow": "node local-workflow.cjs",
-    "test:inline": "node inline-animation.cjs"
+    "test:inline": "node inline-animation.cjs",
+    "test:nested": "node nested-fields.cjs"
   },
   "devDependencies": {
     "jsdom": "30.1.3",
