@@ -27,6 +27,7 @@
     <aside class="pkca__panel" id="pkca-panel" aria-label="Content-assistent" hidden>
       <header class="pkca__header"><div class="pkca__heading"><strong>Content-assistent</strong><small>${escapeHtml(config.title)}</small></div><div class="pkca__window-actions"><button class="pkca__restart" type="button" aria-label="Nieuwe chat" title="Nieuwe chat">↻</button><button class="pkca__collapse" type="button" aria-label="Inklappen">−</button><button class="pkca__close" type="button" aria-label="Sluiten">×</button></div></header>
       <div class="pkca__messages" aria-live="polite"></div>
+      <div class="pkca__activity" role="status" aria-live="polite" hidden><span class="pkca__activity-spinner" aria-hidden="true"></span><span class="pkca__activity-text"></span></div>
       <div class="pkca__changes" hidden></div>
       <section class="pkca__layout-editor" hidden></section>
       <form class="pkca__form">
@@ -43,6 +44,7 @@
   const toggle = root.querySelector('.pkca__toggle');
   const iconsToggle = root.querySelector('.pkca__icons-toggle');
   const messages = root.querySelector('.pkca__messages');
+  const activity = root.querySelector('.pkca__activity');
   const form = root.querySelector('.pkca__form');
   const textarea = form.querySelector('textarea');
   const fileInput = form.querySelector('input[type=file]');
@@ -1726,7 +1728,7 @@
     }
     addMessage(originalMessage, 'user');
     textarea.value = '';
-    setBusy(true);
+    setBusy(true, 'Even nadenken…');
     try {
       const selectedContext = state.selection ? { ...state.selection } : null;
       const data = await request('chat', {
@@ -2104,7 +2106,10 @@
     }
   }
 
-  function setBusy(busy) {
+  function setBusy(busy, label = 'Even bezig…') {
+    activity.hidden = !busy;
+    activity.querySelector('.pkca__activity-text').textContent = busy ? label : '';
+    form.setAttribute('aria-busy', String(busy));
     if (busy === state.busy) return;
     state.busy = busy;
     if (busy) {
