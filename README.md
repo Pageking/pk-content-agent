@@ -4,6 +4,15 @@ WordPress-plugin voor veilige ACF Flexible Content-wijzigingen vanuit een visuel
 
 ## Updates
 
+### 0.35.0
+
+- Duidelijkere wijzigingsnavigatie met Origineel/Mijn wijzigingen en behoud van invoer en scrollpositie.
+- Herkenbare, inklapbare repeaterrijen met dupliceren en verplaatsen.
+- Meer previews zonder reload: geneste inhoud, CSS-achtergronden, kopniveaus, linkdoelvensters en eenvoudige anker-ID’s.
+- Betrouwbaardere WordPress-revisies met behoud van ruwe ACF-metadata en duidelijke foutmeldingen met opnieuw proberen.
+- Afbeeldingen blijven via het layoutvenster bewerkbaar; geen aparte afbeeldingsmodus.
+
+
 De plugin controleert publieke GitHub-releases van `Pageking/pk-content-agent` via Plugin Update Checker. Publiceer voor iedere nieuwe versie een GitHub-release met een semantische tag, bijvoorbeeld `v0.20.0`. De versie in `pk-content-agent.php` moet overeenkomen met de tag.
 
 ## Installatie
@@ -83,3 +92,7 @@ Versiegeschiedenis is bereikbaar via de knop **Versies**. Kies **Bekijk verschil
 Terugdraaien gebeurt uitsluitend via **Wijzigingen controleren**, per veld of met **Alles ongedaan maken**. De losse terugdraaiknop in het chatvenster is verwijderd. Klaarstaande inhoud krijgt een vaste mintgroene markering, ook na het opnieuw opbouwen van geanimeerde titels.
 
 Geneste repeaters gebruiken dezelfde editor voor pluspunten en andere lijsten, inclusief toevoegen/verwijderen met ACF-minimum en -maximum. Afbeeldingen binnen rijen hebben een preview, mediabibliotheek met upload en verwijderen voor optionele velden; WYSIWYG-velden behouden hun opmaakeditor. Herkenbare lijstitems, tekstspans en citaten kunnen ook inline worden bewerkt. Een inline veldwijziging binnen een klaarstaande repeater wordt samengevoegd met die repeater. Structurele wijzigingen gebruiken de serverpreview wanneer veilig bijwerken op de pagina niet mogelijk is. Lokale regressies: `tests/nested-fields.php` en `npm --prefix tests run test:nested`.
+
+Afbeeldingen worden via het layoutvenster aangepast. Herkenbare CSS-achtergronden, wijzigingen binnen bestaande repeaterrijen, kopniveaus (H1–H6), het doelvenster van links en eenvoudige layout-anker-ID’s worden direct in de preview bijgewerkt, zonder paginaherlaadactie. Bij onduidelijke koppelingen, complexe ankers of een onbekende standaardwaarde blijft de serverweergave de terugvaloptie. Repeaterrijen krijgen een inhoudelijke naam en kunnen worden ingeklapt, gedupliceerd en verplaatst. De wijzigingsbalk navigeert met vorige/volgende door klaarstaande wijzigingen. **Origineel** en **Mijn wijzigingen** laden de betreffende paginaweergave op verzoek; vergelijken slaat niets op en behoudt de scrollpositie. De originele weergave gebruikt `pkca_original=1` en onderdrukt alle contentpreviews.
+
+Revisies bewaren en controleren de volledige opgeslagen contentmetadata (inclusief aanvullende layoutmetadata), zonder opmaakfilters als bronvergelijking te gebruiken. Een mislukte publicatie behoudt de wijzigingen en biedt een expliciete herhaalactie. Lokale checks: `tests/revisions.php` en `npm --prefix tests run test:usability`.

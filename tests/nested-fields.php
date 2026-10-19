@@ -21,6 +21,9 @@ try {
  $next=$cards['value'];$next[0]['benefits'][0]['text']='Echte persoonlijke aandacht';$next[0]['background']=['ID'=>$images[1],'url'=>wp_get_attachment_url($images[1])];
  $queued=PKCA_Content::add_changes($id,[['section'=>1,'field_path'=>['cards'],'type'=>'repeater','value'=>$next]]);if(is_wp_error($queued))throw new RuntimeException($queued->get_error_message());
  $preview=PKCA_Content::inspect($id);$assert(count($preview['changes'])===1,'Editing a nested row queues one parent change');
+ $leaves=$preview['changes'][0]['preview_changes']??[];
+ $assert(count($leaves)===2 && $leaves[0]['field_path']===['cards','0','benefits','0','text'],'Repeater preview includes only changed leaves with full nested paths');
+ $assert($leaves[1]['type']==='image' && !empty($leaves[1]['new_url']),'Nested image preview includes attachment URLs');
  PKCA_Content::add_changes($id,[['section'=>1,'field_path'=>['cards','0','benefits','1','text'],'type'=>'text','value'=>'Meer ruimte voor initiatief']]);
  $merged=PKCA_Content::get_changes($id);$assert(count($merged)===1 && $merged[0]['new_value'][0]['benefits'][1]['text']==='Meer ruimte voor initiatief','Inline edits merge into an existing parent repeater draft');
  $published=PKCA_Content::publish($id);if(is_wp_error($published))throw new RuntimeException($published->get_error_message());
@@ -35,6 +38,11 @@ try {
  $current=PKCA_Content::inspect($id)['sections'][0]['fields'][0]['value'];$current[0]['benefits'][0]['text']='Nieuwe plus';
  PKCA_Content::add_changes($id,[['section'=>1,'field_path'=>['cards'],'type'=>'repeater','value'=>$current]]);
  $draft=PKCA_Content::get_changes($id);$assert(count($draft)===1 && $draft[0]['new_value'][0]['title']==='Nieuwe titel' && $draft[0]['old_value'][0]['title']==='Samen verder','Parent edits absorb earlier child edits and preserve the real original for undo');
+
+ $draftRows=$draft[0]['new_value'];$draftRows[]=$draftRows[0];
+ PKCA_Content::add_changes($id,[['section'=>1,'field_path'=>['cards'],'type'=>'repeater','value'=>$draftRows]]);
+ $structural=PKCA_Content::inspect($id)['changes'][0];
+ $assert(!isset($structural['preview_changes']),'Adding rows retains the safe server-rendered fallback');
 
 } finally {
  if($id){PKCA_Content::discard($id);wp_delete_post($id,true);}foreach($images as $image)wp_delete_attachment($image,true);acf_remove_local_field_group('group_pkca_nested_test');wp_set_current_user($user);

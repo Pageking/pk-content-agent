@@ -18,11 +18,14 @@ try {
  for($i=0;$i<3;$i++){ $id=wp_insert_attachment(['post_title'=>'PKCA revision image','post_mime_type'=>'image/jpeg','post_status'=>'inherit']);$images[]=$id;update_post_meta($id,'_wp_attached_file','pkca-history-'.$i.'.jpg'); }
  for($i=0;$i<2;$i++){ $id=wp_insert_post(['post_title'=>'PKCA isolated history fixture','post_status'=>'draft','post_type'=>'page']);$posts[]=$id;update_field('field_pkca_revision_root',[['flex_content'=>[['acf_fc_layout'=>'history_test','title'=>'Original title','images'=>array_slice($images,0,2)]]]],$id); }
  $id=$posts[0];
+ add_post_meta($id,'_content_repeater_0_flex_content_layout_meta',['disabled'=>[2],'renamed'=>['0'=>'Eigen naam']]);
+
  $next=[$images[2],$images[0]];
  $queued=PKCA_Content::add_changes($id,[['section'=>1,'field_path'=>['title'],'type'=>'text','value'=>'Changed title'],['section'=>1,'field_path'=>['images'],'type'=>'gallery','value'=>$next]]);
  $assert(!is_wp_error($queued),'Text and gallery edits queue together');
  $published=PKCA_Content::publish($id);if(is_wp_error($published))throw new RuntimeException($published->get_error_message());
  $revision=$published['revision_id'];
+ $assert(get_post_meta($revision,'_content_repeater_0_flex_content_layout_meta',true)===get_post_meta($id,'_content_repeater_0_flex_content_layout_meta',true),'Snapshot retains additional layout metadata as well as ACF values');
  $assert($revision>0 && wp_is_post_revision($revision)===$id,'An ACF-only publish creates a native WordPress revision');
  $target=PKCA_Content::target($id);
  $old=PKCA_Content::saved_rows(array_merge($target,['acf_id'=>$revision]));
@@ -34,6 +37,14 @@ try {
  $assert($comparison['changes'][0]['old_value']==='Changed title' && $comparison['changes'][0]['new_value']==='Original title','Preview compares current content with the selected revision in the right direction');
  $assert(array_column($comparison['changes'][1]['new_images'],'id')===array_slice($images,0,2),'Preview includes revision gallery thumbnails in original order');
  $assert(PKCA_Content::saved_rows($target)[0]['flex_content'][0]['title']==='Changed title' && !PKCA_Content::get_changes($id),'Reading the comparison changes neither saved nor pending content');
+ $format_revision=static function($value,$post_id){if(wp_is_post_revision($post_id))$value[0]['flex_content'][0]['title']='Different display context';return $value;};
+ add_filter('acf/format_value/name=content_repeater',$format_revision,999,2);
+ $formatted=PKCA_Revisions::snapshot($target);remove_filter('acf/format_value/name=content_repeater',$format_revision,999);
+ $assert(!is_wp_error($formatted) && $formatted>0,'Snapshot validates stored metadata even when revision display formatting differs');
+ $block_copy=static function($check,$object_id,$meta_key){return wp_is_post_revision($object_id) && (str_starts_with($meta_key,'content_repeater') || str_starts_with($meta_key,'_content_repeater')) ? true : $check;};
+ add_filter('add_post_metadata',$block_copy,999,3);
+ $broken=PKCA_Revisions::snapshot($target);remove_filter('add_post_metadata',$block_copy,999);
+ $assert(is_wp_error($broken),'A genuinely incomplete metadata snapshot still blocks publishing');
  $other=PKCA_Revisions::snapshot(PKCA_Content::target($posts[1]));
  $context=PKCA_Content::inspect($id);
  $invalid_preview=PKCA_Revisions::comparison($id,$other);$assert(is_wp_error($invalid_preview)&&$invalid_preview->get_error_code()==='pkca_revision_invalid','Comparison rejects a revision from another page');

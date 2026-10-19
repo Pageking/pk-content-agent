@@ -4,18 +4,34 @@ defined( 'ABSPATH' ) || exit;
 
 /** Content snapshots stored as ordinary WordPress revisions, including ACF metadata. */
 final class PKCA_Revisions {
+ private static function stored_meta( array $target ): array {
+  $all = get_metadata_raw( 'post', (int) $target['acf_id'] );
+  $root = $target['field'];
+  $meta = array_filter( is_array( $all ) ? $all : array(), static fn( $key ): bool => $key === $root || $key === '_' . $root || str_starts_with( $key, $root . '_' ) || str_starts_with( $key, '_' . $root . '_' ), ARRAY_FILTER_USE_KEY );
+  ksort( $meta );
+  return $meta;
+ }
+
+ private static function copy_stored_meta( array $meta, array $target ): void {
+  foreach ( self::stored_meta( $target ) as $key => $values ) delete_metadata( 'post', (int) $target['acf_id'], $key );
+  foreach ( $meta as $key => $values ) {
+   foreach ( $values as $value ) add_metadata( 'post', (int) $target['acf_id'], $key, wp_slash( maybe_unserialize( $value ) ) );
+  }
+  acf_get_store( 'values' )->reset();
+ }
+
  public static function snapshot( array $target ): int|WP_Error {
   $post = 'post' === $target['type'] ? get_post( (int) $target['acf_id'] ) : null;
   if ( ! $post || ! wp_revisions_enabled( $post ) ) return 0;
   // wp_save_post_revision() may skip an ACF-only change as title/content match.
-  $source_rows = PKCA_Content::saved_rows( $target );
+  $source_meta = self::stored_meta( $target );
   $id = _wp_put_post_revision( $post, false );
   if ( is_wp_error( $id ) || ! $id ) return new WP_Error( 'pkca_revision_failed', 'De vorige versie kon niet veilig worden bewaard. Probeer het opnieuw.', array( 'status' => 500 ) );
-  acf_copy_postmeta( $post->ID, $id );
-  $revision_rows = PKCA_Content::saved_rows( array_merge( $target, array( 'acf_id' => $id ) ) );
-  if ( wp_json_encode( $revision_rows ) !== wp_json_encode( $source_rows ) ) {
+  self::copy_stored_meta( $source_meta, array_merge( $target, array( 'acf_id' => $id ) ) );
+  $revision_meta = self::stored_meta( array_merge( $target, array( 'acf_id' => $id ) ) );
+  if ( $revision_meta !== $source_meta ) {
    wp_delete_post_revision( $id );
-   return new WP_Error( 'pkca_revision_failed', 'De vorige inhoud kon niet veilig worden bewaard.', array( 'status' => 500 ) );
+   return new WP_Error( 'pkca_revision_failed', 'De reservekopie kon niet worden gecontroleerd. Je wijzigingen staan nog klaar en zijn niet online gezet. Probeer het opnieuw; blijft dit gebeuren, neem dan contact op met je websitebeheerder.', array( 'status' => 500 ) );
   }
   return (int) $id;
  }
@@ -62,18 +78,18 @@ final class PKCA_Revisions {
   if ( $context['changes'] ) return new WP_Error( 'pkca_revision_pending', 'Zet je wijzigingen eerst online of maak ze ongedaan voordat je een vorige versie terugzet.', array( 'status' => 409 ) );
   if ( ! $base_version || ! hash_equals( $context['post']['modified'], $base_version ) ) return new WP_Error( 'pkca_edit_conflict', 'De pagina is ondertussen gewijzigd. Open de vorige versies opnieuw.', array( 'status' => 409 ) );
   $revision_target = array_merge( $target, array( 'acf_id' => $revision_id ) );
-  $rows = PKCA_Content::saved_rows( $revision_target );
+  $rows = PKCA_Content::saved_rows( $revision_target, false );
   if ( ! is_array( $rows ) ) return new WP_Error( 'pkca_revision_empty', 'Deze versie bevat geen herstelbare pagina-inhoud.', array( 'status' => 422 ) );
-  $before = PKCA_Content::saved_rows( $target );
+  $before = self::stored_meta( $target );
+  $revision_meta = self::stored_meta( $revision_target );
   $backup = self::snapshot( $target );
   if ( is_wp_error( $backup ) ) return $backup;
   if ( ! $backup ) return new WP_Error( 'pkca_revisions_disabled', 'Revisies zijn uitgeschakeld voor deze pagina.', array( 'status' => 422 ) );
   // Restore the content managed by this tool. Title, SEO and other settings
   // remain outside this operation; the original WP revision remains intact.
-  update_field( $target['field'], $rows, $target['acf_id'] );
-  $restored = PKCA_Content::saved_rows( $target );
-  if ( wp_json_encode( $restored ) !== wp_json_encode( $rows ) ) {
-   update_field( $target['field'], $before, $target['acf_id'] );
+  self::copy_stored_meta( $revision_meta, $target );
+  if ( self::stored_meta( $target ) !== $revision_meta ) {
+   self::copy_stored_meta( $before, $target );
    return new WP_Error( 'pkca_revision_restore_failed', 'Terugzetten is niet gelukt. Je huidige inhoud is behouden.', array( 'status' => 500 ) );
   }
   wp_update_post( array( 'ID' => (int) $target['acf_id'] ) );

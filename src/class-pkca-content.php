@@ -9,10 +9,10 @@ final class PKCA_Content {
 	private static array $layout_titles = array();
 
 	public static function preview_is_suppressed(): bool {
-		return self::$suppress_preview;
+		return self::$suppress_preview || ( isset( $_GET['pkca_original'] ) && '1' === $_GET['pkca_original'] );
 	}
 
-	public static function saved_rows( array $target ): mixed {
+	public static function saved_rows( array $target, bool $format = true ): mixed {
 		// Inspection needs the saved source, while templates need the preview.
 		// ACF caches nested and formatted values too: reading the source into
 		// that shared store makes subsequent get_sub_field() return old rows.
@@ -22,7 +22,7 @@ final class PKCA_Content {
 		$store->reset();
 		self::$suppress_preview = true;
 		try {
-			return get_field( $target['field'], $target['acf_id'] );
+			return get_field( $target['field'], $target['acf_id'], $format );
 		} finally {
 			self::$suppress_preview = $was_suppressed;
 			$store->reset();
@@ -407,7 +407,7 @@ final class PKCA_Content {
 	}
 
 	public static function apply_changes_to_raw_value( mixed $value, int|string $post_id ): mixed {
-		if ( self::$suppress_preview || ! is_array( $value ) ) {
+		if ( self::preview_is_suppressed() || ! is_array( $value ) ) {
 			return $value;
 		}
 		$changes = self::get_changes( $post_id );
@@ -454,7 +454,7 @@ final class PKCA_Content {
 	}
 
 	public static function preview_sub_field_value( mixed $value, int|string $post_id, array $acf_field ): mixed {
-		if ( self::$suppress_preview || empty( $acf_field['key'] ) ) {
+		if ( self::preview_is_suppressed() || empty( $acf_field['key'] ) ) {
 			return $value;
 		}
 		foreach ( self::get_changes( $post_id ) as $change ) {
@@ -567,6 +567,34 @@ final class PKCA_Content {
 	}
 
 	private static function decorate_change( array $change ): array {
+		if ( 'repeater' === ( $change['type'] ?? '' ) ) {
+			$definition = acf_get_field( $change['field_key'] ?? '' );
+			if ( $definition && ! empty( $definition['sub_fields'] ) ) {
+				$before = array(); $after = array();
+				$name = $definition['name'];
+				self::apply_field_schema( array( $definition ), array( $name => $change['old_value'] ), array(), $before, array() );
+				self::apply_field_schema( array( $definition ), array( $name => $change['new_value'] ), array(), $after, array() );
+				$old_fields = array();
+				foreach ( $before as $field ) $old_fields[ implode( '.', $field['path'] ) ] = $field;
+				$leaves = array(); $compatible = count( $before ) === count( $after );
+				foreach ( $after as $field ) {
+					$old = $old_fields[ implode( '.', $field['path'] ) ] ?? null;
+					if ( ! $old ) { $compatible = false; break; }
+					if ( 'repeater' === $field['type'] ) {
+						if ( count( $old['value'] ) !== count( $field['value'] ) ) { $compatible = false; break; }
+						continue;
+					}
+					if ( $old['value'] === $field['value'] ) continue;
+					$leaf = $change;
+					$leaf['type'] = $field['type'];
+					$leaf['field_key'] = $field['key'];
+					$leaf['field_path'] = array_merge( $change['field_path'], array_slice( $field['path'], 1 ) );
+					$leaf['old_value'] = $old['value']; $leaf['new_value'] = $field['value'];
+					$leaves[] = self::decorate_change( $leaf );
+				}
+				if ( $compatible && $leaves ) $change['preview_changes'] = $leaves;
+			}
+		}
 		if ( 'text' === ( $change['type'] ?? '' ) ) {
 			$definition = acf_get_field( $change['field_key'] ?? '' );
 			if ( 'textarea' === ( $definition['type'] ?? '' ) && in_array( $definition['new_lines'] ?? '', array( 'br', 'wpautop' ), true ) ) {

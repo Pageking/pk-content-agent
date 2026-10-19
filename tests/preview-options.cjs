@@ -1,0 +1,27 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
+(async()=>{
+ const dom=new JSDOM('<main><div class="flex-repeater"><div class="flex-content"><section id="default-anchor" class="flex-layout test-layout"><h2 class="pk-heading" data-theme="preserved"><span class="pk-heading-text">Our title</span></h2><a class="pk-button" href="/contact" rel="nofollow"><span class="pk-button-text">Contact us</span></a></section></div></div></main>',{url:'http://localhost:10115/test/',runScripts:'outside-only',pretendToBeVisual:true});
+ const w=dom.window,d=w.document;w.structuredClone=structuredClone;w.scrollTo=()=>{};w.HTMLDialogElement.prototype.close=function(){this.open=false};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};
+ const fields=[{path:['heading','text'],type:'text',value:'Our title',original_value:'Our title',editable:true},{path:['heading','tag'],type:'option',value:'h2',editable:true},{path:['buttons','0','button','url'],type:'link',value:'/contact',editable:true},{path:['buttons','0','button','title'],type:'text',value:'Contact us',editable:true},{path:['buttons','0','button','target'],type:'option',value:'',editable:true},{path:['layout_id'],type:'text',value:'',editable:true}];
+ const context={post:{id:123,url:'/test/'},sections:[{number:1,row_index:0,layout_index:0,layout:'test',selectors:['test-layout'],fields}],changes:[],link_targets:[]};
+ w.PKContentAgent={postId:123,title:'Test',restUrl:'/wp-json/pk-content-agent/v1/'};
+ w.fetch=async(url,options={})=>{if(options.method){context.changes=[];return {ok:true,json:async()=>({changes:[],url:'/test/'})}}return {ok:true,json:async()=>structuredClone(context)}};
+ w.eval(fs.readFileSync(path.resolve(__dirname,'../assets/agent.js'),'utf8').replaceAll('window.location.reload();','window.reloads=(window.reloads||0)+1;').replaceAll('window.location.assign(destination);','window.navigations=(window.navigations||0)+1;').replace(/\}\)\(\);\s*$/,'window.api={state,applyPreview,previewKey,reversePreviewChange,discardChange,finish};})();'));
+ await new Promise(resolve=>setTimeout(resolve,25));const api=w.api,section=d.querySelector('section'),span=section.querySelector('.pk-heading-text'),anchor=section.querySelector('a');
+ const change=(type,field_path,old_value,new_value,id)=>({section:1,row_index:0,layout_index:0,type,field_path,old_value,new_value,id});
+ const tag=change('option',['heading','tag'],'h2','h3','tag'),target=change('option',['buttons','0','button','target'],'','_blank','target'),id=change('text',['layout_id'],'','consult','anchor');
+ const apply=item=>assert(api.applyPreview([item]).has(api.previewKey(item)));
+ apply(tag);assert.equal(span.parentElement.localName,'h3');assert.equal(span.parentElement.getAttribute('data-theme'),'preserved');assert.equal(section.querySelector('.pk-heading-text'),span,'Child identity survives tag changes');
+ apply({...tag,new_value:'h4'});assert.equal(span.parentElement.localName,'h4');apply(api.reversePreviewChange(tag));assert.equal(span.parentElement.localName,'h2');
+ apply(target);assert.equal(anchor.target,'_blank');assert.equal(anchor.rel,'nofollow');apply(api.reversePreviewChange(target));assert(!anchor.hasAttribute('target'));
+ apply(id);assert.equal(section.id,'consult');apply({...id,new_value:'consult-two'});assert.equal(section.id,'consult-two');apply(api.reversePreviewChange(id));assert.equal(section.id,'default-anchor','Undo restores the original theme default');
+ const invalid={...id,new_value:'Consult here!'};assert(!api.applyPreview([invalid]).has(api.previewKey(invalid)));
+ const duplicate=d.createElement('div');duplicate.id='consult';d.body.append(duplicate);assert(!api.applyPreview([id]).has(api.previewKey(id)),'Duplicate anchor IDs keep server fallback');duplicate.remove();
+ const doubleHeading=span.parentElement.cloneNode(true);section.append(doubleHeading);api.state.previewTargets.clear();assert(!api.applyPreview([tag]).has(api.previewKey(tag)),'Ambiguous headings never guess');doubleHeading.remove();
+ const doubleLink=anchor.cloneNode(true);section.append(doubleLink);assert(!api.applyPreview([target]).has(api.previewKey(target)),'Ambiguous link targets never guess');doubleLink.remove();
+ section.id='consult';api.state.previewTargets.clear();apply(id);assert(!api.applyPreview([api.reversePreviewChange(id)]).has(api.previewKey(id)),'Unknown default after server render requires fallback');section.id='default-anchor';api.state.previewTargets.clear();
+ for(const item of [tag,target,id]){context.changes=[item];api.state.context.changes=context.changes;apply(item);await api.discardChange(item.id);assert.equal(w.reloads,undefined,'Individual undo avoids reload');assert.equal(w.navigations,undefined)}
+ assert.equal(span.parentElement.localName,'h2');assert(!anchor.hasAttribute('target'));assert.equal(section.id,'default-anchor');
+ context.changes=[tag,target,id];api.state.context.changes=context.changes;api.applyPreview(context.changes);await api.finish('publish');assert.equal(w.navigations,undefined,'Publishing supported options stays on the page');assert.equal(span.parentElement.localName,'h3');assert.equal(anchor.target,'_blank');assert.equal(section.id,'consult');
+ console.log('PASS: heading levels, link targets and layout anchors preview/edit/undo/publish without reload; DOM children and link rel preserved; ambiguous/unknown cases retain fallback.');dom.window.close();
+})().catch(error=>{console.error(error);process.exitCode=1});
