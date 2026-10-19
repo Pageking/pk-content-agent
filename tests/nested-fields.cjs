@@ -25,6 +25,13 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
  const plus=d.querySelector('[data-repeater-path="0.benefits.0.text"]');plus.value='Echte persoonlijke aandacht';plus.dispatchEvent(new w.Event('input',{bubbles:true}));
  d.querySelector('[data-repeater-action="add"][data-nested-path="0.benefits"]').click();assert.equal(JSON.parse(d.querySelector('[data-repeater-value]').value)[0].benefits.length,3);assert(d.querySelector('[data-repeater-action="add"][data-nested-path="0.benefits"]').disabled);
  d.querySelector('[data-repeater-action="remove"][data-nested-path="0.benefits"][data-row="2"]').click();
+ assert(d.querySelector('[data-row-title]').textContent.includes('Samen verder'));
+ d.querySelector('[data-repeater-action="move"][data-nested-path="0.benefits"][data-row="0"][data-direction="1"]').click();
+ assert.equal(JSON.parse(d.querySelector('[data-repeater-value]').value)[0].benefits[1].text,'Echte persoonlijke aandacht');
+ d.querySelector('[data-repeater-action="move"][data-nested-path="0.benefits"][data-row="1"][data-direction="-1"]').click();
+ d.querySelector('[data-repeater-action="duplicate"][data-nested-path="0.benefits"][data-row="0"]').click();
+ assert.equal(JSON.parse(d.querySelector('[data-repeater-value]').value)[0].benefits[1].text,'Echte persoonlijke aandacht');
+ d.querySelector('[data-repeater-action="remove"][data-nested-path="0.benefits"][data-row="1"]').click();
  d.querySelector('[data-nested-media="0.background"]').click();await wait();d.querySelector('[data-media-id="2"]').click();d.querySelector('[data-media-confirm]').click();await wait();
  let current=JSON.parse(d.querySelector('[data-repeater-value]').value);assert.equal(current[0].background.ID,2);assert.equal(current[0].benefits[0].text,'Echte persoonlijke aandacht');assert.equal(current[0].benefits[1].text,rows[0].benefits[1].text);assert.equal(current[0].text,'<p>We <strong>helpen!</strong> elkaar.</p>');
  d.querySelector('.pkca__layout-save').click();await wait();assert.equal(posts.at(-1).changes.length,1);assert.equal(posts.at(-1).changes[0].value[0].background.ID,2);assert.equal(posts.at(-1).changes[0].value[0].benefits.length,2);

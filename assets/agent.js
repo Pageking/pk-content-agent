@@ -11,6 +11,8 @@
   const positionKey = `pkca-position-${config.postId}`;
   const sizeKey = `pkca-size-${config.postId}`;
   const state = { open: false, collapsed: false, context: null, upload: null, selection: null, selectedTarget: null, layoutButtons: [], formButtons: [], contentButtons: [], activeLayout: null, layoutNeedsRefresh: false, previewTargets: new Map(), drafts: {}, busy: false, busyControls: new Map() };
+  const originalMode = new URL(window.location.href).searchParams.get('pkca_original') === '1';
+  let changeCursor = 0;
   const iconVisibilityKey = 'pkca-icons-visible';
   let iconsVisible = true;
   try { iconsVisible = sessionStorage.getItem(iconVisibilityKey) !== 'false'; } catch (_) {}
@@ -40,6 +42,7 @@
       </form><div class="pkca__resize" aria-hidden="true"></div>
     </aside>`;
   document.body.append(root);
+  root.classList.toggle('pkca--original', originalMode);
 
   const panel = root.querySelector('.pkca__panel');
   const toggle = root.querySelector('.pkca__toggle');
@@ -60,6 +63,60 @@
   reviewReturn.addEventListener('click', openChangesReview);
   reviewDialog.addEventListener('cancel', event => { if (state.busy) event.preventDefault(); });
 
+  const browseBar = document.createElement('nav');
+  browseBar.className = 'pkca__browse';
+  browseBar.setAttribute('aria-label', 'Wijzigingen op de pagina bekijken');
+  browseBar.hidden = true;
+  browseBar.innerHTML = '<button type="button" data-change-prev aria-label="Vorige wijziging">←</button><span data-change-location></span><button type="button" data-change-next aria-label="Volgende wijziging">→</button><button type="button" data-view-original>Origineel</button><button type="button" data-view-preview>Mijn wijzigingen</button><button type="button" data-browse-review>Controleren</button><p role="status" data-browse-status hidden></p>';
+  root.append(browseBar);
+  browseBar.querySelector('[data-change-prev]').onclick = () => locateChange(changeCursor - 1);
+  browseBar.querySelector('[data-change-next]').onclick = () => locateChange(changeCursor + 1);
+  browseBar.querySelector('[data-view-original]').onclick = () => switchView(true);
+  browseBar.querySelector('[data-view-preview]').onclick = () => switchView(false);
+  browseBar.querySelector('[data-browse-review]').onclick = () => { if (originalMode) switchView(false, true); else openChangesReview(); };
+
+  function switchView(original, review = false) {
+    if (state.busy) return;
+    captureLayoutDraft();
+    cancelInlineEdit();
+    const url = new URL(window.location.href);
+    if (original) url.searchParams.set('pkca_original', '1'); else url.searchParams.delete('pkca_original');
+    sessionStorage.setItem(`pkca-compare-scroll-${config.postId}`, String(window.scrollY));
+    if (review) sessionStorage.setItem('pkca-review-resume', String(config.postId));
+    window.location.assign(url.href);
+  }
+
+  function updateBrowseBar() {
+    const items = state.context?.changes || [];
+    browseBar.hidden = !items.length;
+    changeCursor = Math.max(0, Math.min(changeCursor, items.length - 1));
+    const item = items[changeCursor];
+    const info = item ? reviewField(item) : {};
+    browseBar.querySelector('[data-change-location]').textContent = item ? `${changeCursor + 1}/${items.length} · ${info.section?.label || 'Onderdeel'} · ${friendlyLabel(info.field?.label || item.field_name || 'Inhoud')}` : '';
+    browseBar.querySelector('[data-view-original]').setAttribute('aria-pressed', String(originalMode));
+    browseBar.querySelector('[data-view-preview]').setAttribute('aria-pressed', String(!originalMode));
+    browseBar.querySelectorAll('[data-change-prev],[data-change-next]').forEach(button => button.disabled = items.length < 2);
+  }
+
+  function locateChange(index) {
+    const items = state.context?.changes || [];
+    if (!items.length || state.busy) return;
+    changeCursor = (index + items.length) % items.length;
+    const item = items[changeCursor];
+    const section = getSectionByNumber(item.section);
+    const cached = state.previewTargets.get(`${item.row_index}:${item.layout_index}:${(item.field_path || []).join('.')}`)?.node;
+    const element = !originalMode && cached?.isConnected ? (cached.nodeType === Node.TEXT_NODE ? cached.parentElement : cached) : section;
+    const status = browseBar.querySelector('[data-browse-status]');
+    status.hidden = !!element;
+    if (!element) { status.textContent = 'Dit onderdeel is in deze weergave niet zichtbaar. Bekijk de wijziging via Controleren.'; updateBrowseBar(); return; }
+    if (reviewDialog.open) reviewDialog.close();
+    setOpen(false);
+    document.querySelectorAll('.pkca-review-highlight').forEach(node => node.classList.remove('pkca-review-highlight'));
+    element.classList.add('pkca-review-highlight');
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    updateBrowseBar();
+  }
+
   let inlineMode = false;
   let inlineEditing = null;
   const inlineTargets = new Map();
@@ -71,6 +128,7 @@
   root.append(inlineBar);
   inlineToggle.addEventListener('click', () => {
     if (state.busy) return;
+    if (originalMode) { switchView(false); return; }
     cancelInlineEdit();
     inlineMode = !inlineMode;
     inlineToggle.setAttribute('aria-pressed', String(inlineMode));
@@ -310,6 +368,7 @@
   }
 
   function setOpen(open) {
+    if (open && originalMode) { switchView(false); return; }
     state.open = open;
     panel.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
@@ -527,7 +586,9 @@
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = normalizeText(stripHtml(String(data.message || '')));
-      throw new Error(message || 'Er ging iets mis bij het verwerken van de opdracht.');
+      const error = new Error(data.code === 'rest_cookie_invalid_nonce' ? 'Je sessie is verlopen. Herlaad de pagina om verder te gaan; je klaargezette wijzigingen blijven bewaard.' : message || 'Er ging iets mis bij het verwerken van de opdracht.');
+      error.code = data.code || '';
+      throw error;
     }
     return data;
   }
@@ -536,7 +597,7 @@
     try {
       const previous = state.context?.changes || [];
       state.context = await request(`context?post_id=${config.postId}`);
-      if (restorePreview) {
+      if (restorePreview && !originalMode) {
         const pending = state.context.changes || [];
         const removed = previous.filter(item => !pending.some(change => previewKey(change) === previewKey(item))).map(reversePreviewChange);
         const restored = [...removed, ...pending];
@@ -552,6 +613,8 @@
       installLayoutButtons();
       installContentButtons();
       installInlineTargets();
+      const savedScroll = sessionStorage.getItem(`pkca-compare-scroll-${config.postId}`);
+      if (savedScroll !== null) { sessionStorage.removeItem(`pkca-compare-scroll-${config.postId}`); window.scrollTo(0, Number(savedScroll)); }
       if (restorePreview && state.activeLayout !== null) openLayoutEditor(state.activeLayout);
       if (sessionStorage.getItem('pkca-review-resume') === String(config.postId)) {
         sessionStorage.removeItem('pkca-review-resume');
@@ -1220,7 +1283,14 @@
     const definition = nestedRepeaterDefinition(field, path);
     if (!definition) return;
     const current = path.length ? (valueAtPath(rows, path) || []) : rows;
-    if (button.dataset.repeaterAction === 'add') {
+    if (button.dataset.repeaterAction === 'duplicate') {
+      if (Number(definition.max || 0) > 0 && current.length >= Number(definition.max)) return;
+      current.splice(Number(button.dataset.row) + 1, 0, structuredClone(current[Number(button.dataset.row)]));
+    } else if (button.dataset.repeaterAction === 'move') {
+      const from = Number(button.dataset.row), to = from + Number(button.dataset.direction);
+      if (to < 0 || to >= current.length) return;
+      current.splice(to, 0, current.splice(from, 1)[0]);
+    } else if (button.dataset.repeaterAction === 'add') {
       if (Number(definition.max || 0) > 0 && current.length >= Number(definition.max)) return;
       current.push(structuredClone(definition.row_template || {}));
     } else {
@@ -1240,12 +1310,21 @@
     addButton.textContent = atMaximum ? `Maximum van ${field.max} rijen bereikt` : 'Rij toevoegen';
   }
 
+  function repeaterRowLabel(row, index) {
+    const value = [row?.title, row?.heading?.text, row?.label, row?.text, row?.name].find(item => typeof item === 'string' && stripHtml(item).trim());
+    const label = value ? normalizeText(stripHtml(value)) : `Rij ${index+1}`;
+    return label.length > 65 ? label.slice(0,62) + '…' : label;
+  }
+
   function repeaterRowsMarkup(field, fieldIndex, rows, prefix = []) {
     const rowFields = (field.row_fields || []).filter(candidate => !(field.row_fields || []).some(parent => parent.type === 'repeater' && pathStartsWith(candidate.path || [], parent.path || [])));
     const atMinimum = Number(field.min || 0) > 0 && rows.length <= Number(field.min);
     return rows.map((row, rowIndex) => {
       const shownInstructions = new Set();
-      return `<section class="pkca__repeater-row"><header><strong>Rij ${rowIndex + 1}</strong><button type="button" data-repeater-action="remove" data-row="${rowIndex}" data-field-index="${fieldIndex}"${prefix.length ? ` data-nested-path="${escapeHtml(prefix.join('.'))}"` : ''}${atMinimum ? ' disabled' : ''}>Verwijderen</button></header><div class="pkca__repeater-fields">${rowFields.map(rowField => fieldGroupHelp(rowField, shownInstructions) + repeaterInputMarkup(rowField, row, rowIndex, fieldIndex, prefix)).join('')}</div></section>`;
+      const name = repeaterRowLabel(row, rowIndex);
+      const address = `data-row="${rowIndex}" data-field-index="${fieldIndex}"${prefix.length ? ` data-nested-path="${escapeHtml(prefix.join('.'))}"` : ''}`;
+      const atMaximum = Number(field.max || 0) > 0 && rows.length >= Number(field.max);
+      return `<details class="pkca__repeater-row" data-row-address="${escapeHtml([...prefix,String(rowIndex)].join('.'))}" open><summary><strong data-row-title>${escapeHtml(name)}</strong><small>Rij ${rowIndex + 1}</small></summary><div class="pkca__row-actions"><button type="button" data-repeater-action="move" data-direction="-1" ${address} aria-label="${escapeHtml(name)} omhoog"${rowIndex === 0 ? ' disabled' : ''}>↑</button><button type="button" data-repeater-action="move" data-direction="1" ${address} aria-label="${escapeHtml(name)} omlaag"${rowIndex === rows.length-1 ? ' disabled' : ''}>↓</button><button type="button" data-repeater-action="duplicate" ${address}${atMaximum ? ' disabled' : ''}>Dupliceren</button><button type="button" data-repeater-action="remove" ${address}${atMinimum ? ' disabled' : ''}>Verwijderen</button></div><div class="pkca__repeater-fields">${rowFields.map(rowField => fieldGroupHelp(rowField, shownInstructions) + repeaterInputMarkup(rowField, row, rowIndex, fieldIndex, prefix)).join('')}</div></details>`;
     }).join('');
   }
 
@@ -1294,6 +1373,7 @@
     const next = input.hasAttribute('data-nested-taxonomy') ? [...input.selectedOptions].map(option => Number(option.value)) : input.type === 'checkbox' ? (input.checked ? '1' : '0') : input.value;
     setValueAtPath(rows, input.dataset.repeaterPath.split('.'), next);
     store.value = JSON.stringify(rows);
+    input.closest('[data-repeater-field]').querySelectorAll('[data-row-address]').forEach(details => { const row = valueAtPath(rows, details.dataset.rowAddress.split('.'));details.querySelector('[data-row-title]').textContent = repeaterRowLabel(row, Number(details.dataset.rowAddress.split('.').at(-1))); });
   }
 
   function changeNestedMedia(button, layout, field) {
@@ -1701,6 +1781,7 @@
   }
 
   function syncPendingHighlights() {
+    if (originalMode) return;
     document.querySelectorAll('[data-pkca-preview]').forEach(element => {
       element.classList.remove('pkca-preview-target');
       element.removeAttribute('data-pkca-preview');
@@ -1752,6 +1833,7 @@
   highlightObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
 
   function applyPreview(items) {
+    if (originalMode) return new Set();
     const applied = new Set();
     document.querySelectorAll('[data-pkca-preview]').forEach(element => {
       element.classList.remove('pkca-preview-target');
@@ -1763,7 +1845,34 @@
 
       const targetKey = `${item.row_index}:${item.layout_index}:${(item.field_path || []).join('.')}`;
       let changedElement = null;
-      if (item.type === 'image' && item.new_url) {
+      if (item.type === 'repeater' && Array.isArray(item.preview_changes) && item.preview_changes.length) {
+        // Resolve all existing text nodes before changing any of them. This
+        // also makes swapping two rows safe: a new value may be another row's
+        // current value. Ambiguous repeated text uses the server fallback.
+        for (const child of item.preview_changes.filter(change => change.type === 'text')) {
+          const key = `${child.row_index}:${child.layout_index}:${child.field_path.join('.')}`;
+          if (state.previewTargets.get(key)?.node?.isConnected) continue;
+          const oldText = normalizeText(stripHtml(String(child.old_value ?? '')));
+          if (!oldText) return;
+          const walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
+          const nodes = []; let node;
+          while ((node = walker.nextNode())) if (normalizeText(node.nodeValue) === oldText) nodes.push(node);
+          if (nodes.length !== 1) return;
+          state.previewTargets.set(key, { type: 'text', node: nodes[0] });
+        }
+        const children = applyPreview(item.preview_changes);
+        if (item.preview_changes.every(child => children.has(previewKey(child)))) applied.add(previewKey(item));
+        return;
+      }
+      if (item.type === 'image') {
+        const background = previewBackground(section, item, targetKey);
+        if (background) {
+          applied.add(previewKey(item));
+          background.classList.add('pkca-preview-target');
+          background.setAttribute('data-pkca-preview', 'true');
+          return;
+        }
+        if (!item.new_url) return;
         const existingTarget = state.previewTargets.get(targetKey);
         const images = Array.from(section.querySelectorAll('img'));
         const oldImageKey = imageKeyFromUrl(item.old_url || '');
@@ -1810,8 +1919,13 @@
           state.previewTargets.set(targetKey, { type: 'link', node: anchor });
         }
       } else if (item.type === 'option') {
-        changedElement = previewButtonOption(section, item);
+        changedElement = previewHeadingTag(section, item, targetKey) || previewLinkTarget(section, item, targetKey) || previewButtonOption(section, item);
       } else if (item.type === 'text') {
+        if ((item.field_path || []).length === 1 && item.field_path[0] === 'layout_id') {
+          changedElement = previewAnchorId(section, item, targetKey);
+          if (changedElement) applied.add(previewKey(item));
+          return;
+        }
         const oldText = normalizeText(stripHtml(String(item.old_value ?? '')));
         const newHtml = String(item.new_preview_html ?? item.new_value ?? '');
         const newText = stripHtml(newHtml);
@@ -1915,6 +2029,90 @@
     });
     syncPendingHighlights();
     return applied;
+  }
+
+  // Match the actual CSS URL, including responsive image sizes. Never guess a
+  // background from the number of images in a layout.
+  function previewBackground(section, item, targetKey) {
+    const cached = state.previewTargets.get(targetKey);
+    const oldKey = imageKeyFromUrl(item.old_url || '');
+    const newKey = imageKeyFromUrl(item.new_url || '');
+    const candidates = [section, ...section.querySelectorAll('*')].filter(node => !node.matches('img, picture, source'));
+    const matches = candidates.filter(node => {
+      const urls = [...getComputedStyle(node).backgroundImage.matchAll(/url\(["']?(.*?)["']?\)/g)].map(match => imageKeyFromUrl(match[1]));
+      return urls.includes(oldKey || newKey);
+    });
+    const node = cached?.type === 'background' && cached.node.isConnected ? cached.node : matches.length === 1 ? matches[0] : null;
+    if (!node) return null;
+    const background = getComputedStyle(node).backgroundImage;
+    const next = item.new_url ? background.replace(/url\(["']?(.*?)["']?\)/g, (url, source) =>
+      [oldKey, newKey].includes(imageKeyFromUrl(source)) ? `url("${String(item.new_url).replaceAll('"', '%22')}")` : url) : 'none';
+    // Remember the CSS layers so clearing and restoring a background is reversible.
+    const template = cached?.backgroundTemplate || background;
+    node.style.backgroundImage = item.new_url && background === 'none'
+      ? template.replace(/url\(["']?(.*?)["']?\)/g, (url, source) => [oldKey, newKey].includes(imageKeyFromUrl(source)) ? `url("${String(item.new_url).replaceAll('"', '%22')}")` : url)
+      : next;
+    state.previewTargets.set(targetKey, { type: 'background', node, backgroundTemplate: template });
+    return node;
+  }
+
+  function siblingField(item, name) {
+    const path = [...(item.field_path || []).slice(0, -1), name];
+    return reviewField({ ...item, field_path: path }).field;
+  }
+
+  function previewHeadingTag(section, item, targetKey) {
+    if (item.field_path?.at(-1) !== 'tag' || !/^h[1-6]$/.test(String(item.new_value))) return null;
+    const text = siblingField(item, 'text');
+    if (!text) return null;
+    const values = [text.value, text.original_value].map(value => normalizeText(stripHtml(String(value ?? '')))).filter(Boolean);
+    const candidates = [...section.querySelectorAll('h1,h2,h3,h4,h5,h6')].filter(node => values.includes(normalizeText(node.textContent)));
+    const cached = state.previewTargets.get(targetKey)?.node;
+    let heading = cached?.isConnected ? cached : candidates.length === 1 ? candidates[0] : null;
+    if (!heading) return null;
+    if (heading.localName !== item.new_value) {
+      const replacement = document.createElement(item.new_value);
+      for (const attribute of heading.attributes) replacement.setAttribute(attribute.name, attribute.value);
+      // Move the children, retaining animated text spans and their listeners.
+      while (heading.firstChild) replacement.append(heading.firstChild);
+      heading.replaceWith(replacement);
+      state.previewTargets.forEach(target => { if (target.node === heading) target.node = replacement; });
+      if (state.selectedTarget?.node === heading) state.selectedTarget.node = replacement;
+      heading = replacement;
+    }
+    state.previewTargets.set(targetKey, { type: 'heading', node: heading });
+    return heading;
+  }
+
+  function previewLinkTarget(section, item, targetKey) {
+    if (item.field_path?.at(-1) !== 'target' || !['', '_self', '_blank'].includes(item.new_value)) return null;
+    const url = siblingField(item, 'url');
+    const title = siblingField(item, 'title');
+    if (!url) return null;
+    const urls = [url.value, url.original_value].filter(Boolean).map(urlKey);
+    const titles = [title?.value, title?.original_value].filter(Boolean).map(value => normalizeText(stripHtml(String(value))));
+    const candidates = [...section.querySelectorAll('a[href]')].filter(node => urls.includes(urlKey(node.href)) && (!titles.length || titles.includes(selectableText(node))));
+    const cached = state.previewTargets.get(targetKey)?.node;
+    const anchor = cached?.isConnected ? cached : candidates.length === 1 ? candidates[0] : null;
+    if (!anchor) return null;
+    if (item.new_value) anchor.setAttribute('target', item.new_value); else anchor.removeAttribute('target');
+    state.previewTargets.set(targetKey, { type: 'link-target', node: anchor });
+    return anchor;
+  }
+
+  function previewAnchorId(section, item, targetKey) {
+    const value = String(item.new_value || '');
+    // Complex sanitization and an unknown theme fallback still need a render.
+    if (value && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) return null;
+    const cached = state.previewTargets.get(targetKey);
+    const oldValue = String(item.old_value || '');
+    const sourceId = cached?.type === 'anchor' ? cached.sourceId : (oldValue || (section.id !== value ? section.id : undefined));
+    const id = value || (oldValue === '' || cached?.sourceValue === '' ? sourceId : undefined);
+    if (id === undefined) return null;
+    if (id && [...document.querySelectorAll('[id]')].some(node => node !== section && node.id === id)) return null;
+    if (id) section.id = id; else section.removeAttribute('id');
+    state.previewTargets.set(targetKey, { type: 'anchor', node: section, sourceId, sourceValue: cached?.sourceValue ?? oldValue });
+    return section;
   }
 
   function previewButtonOption(section, item) {
@@ -2103,6 +2301,7 @@
   });
 
   function renderChanges(items) {
+    updateBrowseBar();
     const pendingCount = Array.isArray(items) ? items.length : 0;
     root.classList.toggle('pkca--has-pending', pendingCount > 0);
     toggle.dataset.pendingCount = String(pendingCount);
@@ -2198,6 +2397,7 @@
     if (state.busy) return;
     const items = state.context?.changes || [];
     if (!items.length) return;
+    if (originalMode) { switchView(false, true); return; }
     captureLayoutDraft();
     reviewReturn.hidden = true;
     document.querySelectorAll('.pkca-review-highlight').forEach(element => element.classList.remove('pkca-review-highlight'));
@@ -2216,23 +2416,19 @@
     reviewDialog.querySelector('[data-review-publish]').addEventListener('click', () => finish('publish'));
     reviewDialog.querySelectorAll('[data-review-discard]').forEach(button => button.addEventListener('click', () => discardChange(button.dataset.reviewDiscard)));
     reviewDialog.querySelectorAll('[data-review-locate]').forEach(button => button.addEventListener('click', () => {
-      const item = items[Number(button.dataset.reviewLocate)];
-      const section = getSectionByNumber(item.section);
-      if (!section) { setReviewError('Dit onderdeel is niet zichtbaar op de pagina. Je kunt de wijziging wel in dit overzicht controleren.'); return; }
-      reviewDialog.close();
-      setOpen(false);
-      reviewReturn.hidden = false;
-      section.classList.add('pkca-review-highlight');
-      section.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      reviewReturn.focus();
+      locateChange(Number(button.dataset.reviewLocate));
     }));
     if (!reviewDialog.open) reviewDialog.showModal();
   }
 
-  function setReviewError(message) {
+  function setReviewError(message, retry = null) {
     const status = reviewDialog.querySelector('.pkca__review-status');
     if (!status) return;
     status.textContent = message;
+    if (retry) {
+      const note = document.createElement('p');note.textContent='Je wijzigingen staan nog klaar. Bekijk ze opnieuw voordat je het nog eens probeert.';status.append(note);
+      const button=document.createElement('button');button.type='button';button.textContent='Opnieuw proberen';button.onclick=retry;status.append(button);
+    }
     status.hidden = false;
   }
 
@@ -2272,7 +2468,7 @@
       window.location.assign(destination);
     } catch (error) {
       addMessage(error.message, 'error');
-      setReviewError(error.message);
+      setReviewError(error.message, () => finish(action));
     } finally {
       setBusy(false);
     }
@@ -2282,7 +2478,8 @@
     return { ...item, old_value: item.new_value, new_value: item.old_value,
       old_preview_html: item.new_preview_html, new_preview_html: item.old_preview_html,
       old_url: item.new_url, new_url: item.old_url, new_html: item.old_html,
-      old_images: item.new_images, new_images: item.old_images };
+      old_images: item.new_images, new_images: item.old_images,
+      ...(Array.isArray(item.preview_changes) ? { preview_changes: item.preview_changes.map(reversePreviewChange) } : {}) };
   }
 
 	async function discardChange(changeId) {

@@ -85,5 +85,24 @@ const html='<main><div class="flex-repeater"><div class="flex-content"><div clas
  api.state.previewTargets.clear();subtitle.innerHTML=lines.new_preview_html;assert(api.applyPreview([lines]).has(api.previewKey(lines)));assert.equal(subtitle.querySelectorAll('br').length,1);
  console.log('PASS: textarea Enter, blank lines, repeated edits and undo match formatted ACF output, including existing server previews.');
 
+ const background=d.createElement('div');background.style.backgroundImage='linear-gradient(red, blue), url("http://localhost:10115/background-old-400x200.webp")';section.append(background);
+ const bg={...image,id:'background',field_path:['background'],old_url:'http://localhost:10115/background-old.webp',new_url:'http://localhost:10115/background-new.webp'};
+ assert(api.applyPreview([bg]).has(api.previewKey(bg)));assert(background.style.backgroundImage.includes('background-new.webp'));assert(background.style.backgroundImage.includes('linear-gradient'));
+ api.applyPreview([api.reversePreviewChange(bg)]);assert(background.style.backgroundImage.includes('background-old.webp'));
+ api.applyPreview([{...bg,new_url:''}]);assert.equal(background.style.backgroundImage,'none');api.applyPreview([api.reversePreviewChange({...bg,new_url:''})]);assert(background.style.backgroundImage.includes('background-old.webp'));
+ const list=d.createElement('ul');list.innerHTML='<li>Personal attention</li><li>Room for initiative</li>';section.append(list);
+ const leaf={...text,id:'benefit',field_path:['cards','0','benefits','0','text'],old_value:'Personal attention',new_value:'More personal attention'};
+ const parent={...leaf,id:'cards',type:'repeater',field_path:['cards'],old_value:[{benefits:[{text:leaf.old_value}]}],new_value:[{benefits:[{text:leaf.new_value}]}],preview_changes:[leaf]};
+ context.changes=[parent];api.state.context.changes=context.changes;assert(api.applyPreview([parent]).has(api.previewKey(parent)));assert.equal(list.firstChild.textContent,leaf.new_value);assert.equal(list.lastChild.textContent,'Room for initiative');
+ await api.discardChange(parent.id);assert.equal(list.firstChild.textContent,leaf.old_value);assert.equal(w.testReloads,undefined,'Nested row undo avoids reload');
+ context.changes=[parent];api.state.context.changes=context.changes;api.applyPreview([parent]);await api.finish('publish');assert.equal(w.testNavigations,undefined,'Nested row publish avoids navigation');
+ const unsupportedParent={...parent,preview_changes:undefined};assert(!api.applyPreview([unsupportedParent]).has(api.previewKey(parent)),'Structural repeaters retain server fallback');
+ const ambiguous=d.createElement('div');ambiguous.style.backgroundImage='url("http://localhost:10115/background-old.webp")';section.append(ambiguous);api.state.previewTargets.clear();assert(!api.applyPreview([bg]).has(api.previewKey(bg)),'Ambiguous backgrounds never update an arbitrary node');
+ const swapList=d.createElement('ul');swapList.innerHTML='<li>First unique plus</li><li>Second unique plus</li>';section.append(swapList);
+ const swapA={...leaf,field_path:['swap','0','text'],old_value:'First unique plus',new_value:'Second unique plus'},swapB={...leaf,field_path:['swap','1','text'],old_value:'Second unique plus',new_value:'First unique plus'};
+ const swap={...parent,field_path:['swap'],preview_changes:[swapA,swapB]};assert(api.applyPreview([swap]).has(api.previewKey(swap)));assert.deepEqual([...swapList.children].map(node=>node.textContent),['Second unique plus','First unique plus']);api.applyPreview([api.reversePreviewChange(swap)]);assert.equal(swapList.firstChild.textContent,'First unique plus');
+ list.firstChild.textContent='Personal attention';const duplicate=d.createElement('li');duplicate.textContent='Personal attention';list.append(duplicate);api.state.previewTargets.clear();assert(!api.applyPreview([parent]).has(api.previewKey(parent)),'Repeated old text falls back instead of guessing a row');
+ console.log('PASS: CSS backgrounds preserve layers and undo; nested row text previews, publishes and rolls back without reload; structural/ambiguous cases retain fallback.');
+
 dom.window.close();
 })().catch(e=>{console.error(e);process.exitCode=1});
